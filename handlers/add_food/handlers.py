@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from db.database import Database
-from db.models import UserRepository, MealRepository, FavoritesRepository
+from db.models import UserRepository, MealRepository, FavoritesRepository, DailyStatsRepository
 from handlers.add_food.constants import (
     STATE_SELECT_METHOD, STATE_WAIT_FOR_TEXT, STATE_SELECT_PRODUCT,
     STATE_SELECT_MEAL_TYPE, STATE_ENTER_WEIGHT, STATE_CONFIRM_ADD,
@@ -659,15 +659,47 @@ class AddFoodHandlers:
         """Возвращает в дневник и завершает диалог."""
         query = update.callback_query
         await query.answer()
-
-        # Просто завершаем диалог, дневник покажет show_diary
-        await query.edit_message_text("📔 Возвращаюсь в дневник...", parse_mode="HTML")
         
-        # Очищаем данные
+        # Очищаем временные данные
         for key in ["search_results", "selected_product", "calculated_food", 
                     "meal_type", "food_weight", "last_added_food", "food_search_query"]:
             context.user_data.pop(key, None)
-
+        
+        # Получаем данные для дневника
+        user = update.effective_user
+        db = self.db
+        user_repo = UserRepository(db)
+        stats_repo = DailyStatsRepository(db)
+        
+        user_id = await user_repo.get_user_id(user.id)
+        profile = await user_repo.get_profile(user_id)
+        today_stats = await stats_repo.get_today_stats(user_id)
+        
+        name = user.first_name or "друг"
+        greeting = f"🥑 <b>С возвращением, {name}!</b>"
+        
+        from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
+        
+        diary_text = format_diary_compact(
+            daily_kcal=profile["daily_kcal"],
+            current_kcal=today_stats.get("kcal", 0),
+            protein_goal=profile["daily_protein_g"],
+            current_protein=today_stats.get("protein", 0),
+            fat_goal=profile["daily_fat_g"],
+            current_fat=today_stats.get("fat", 0),
+            carbs_goal=profile["daily_carbs_g"],
+            current_carbs=today_stats.get("carbs", 0),
+            water_current=today_stats.get("water", 0),
+        )
+        
+        text = f"{greeting}\n\n{diary_text}"
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=get_main_diary_keyboard(),
+            parse_mode="HTML"
+        )
+        
         return ConversationHandler.END
 
     async def add_another(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
