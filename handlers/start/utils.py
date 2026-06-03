@@ -1,4 +1,4 @@
-# handlers/start/utils.py
+# handlers/start/utils.py - удалите функцию parse_food_text, оставьте только:
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Optional, Tuple
@@ -6,9 +6,7 @@ import re
 
 
 def format_greeting(first_name: Optional[str] = None) -> str:
-    """
-    Форматирует приветствие в зависимости от времени суток.
-    """
+    """Форматирует приветствие в зависимости от времени суток."""
     now = datetime.now()
     hour = now.hour
 
@@ -27,9 +25,7 @@ def format_greeting(first_name: Optional[str] = None) -> str:
 
 
 def get_weekday_name() -> str:
-    """
-    Возвращает название дня недели на русском.
-    """
+    """Возвращает название дня недели на русском."""
     weekdays = {
         0: "понедельник",
         1: "вторник", 
@@ -39,21 +35,17 @@ def get_weekday_name() -> str:
         5: "суббота",
         6: "воскресенье"
     }
-    
     now = datetime.now()
     return weekdays[now.weekday()]
 
 
 def get_month_name() -> str:
-    """
-    Возвращает название месяца на русском.
-    """
+    """Возвращает название месяца на русском."""
     months = {
         1: "января", 2: "февраля", 3: "марта", 4: "апреля",
         5: "мая", 6: "июня", 7: "июля", 8: "августа",
         9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
     }
-    
     now = datetime.now()
     return months[now.month]
 
@@ -117,14 +109,3 @@ def get_main_diary_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⋯", callback_data="diary_more"),
         ],
     ])
-
-
-def parse_food_text(text: str) -> Tuple[str, Optional[float]]:
-    """Парсит текст вида "омлет 200г" или "банан"."""
-    text = text.strip()
-    weight_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:г|g|грамм?)$", text, re.IGNORECASE)
-    if weight_match:
-        weight = float(weight_match.group(1))
-        name = re.sub(r"\s*\d+(?:\.\d+)?\s*(?:г|g|грамм?)$", "", text, flags=re.IGNORECASE).strip()
-        return name if name else text, weight
-    return text, None
