@@ -5,10 +5,7 @@ from telegram.ext import ContextTypes
 from db.database import Database
 from db.models import UserRepository, DailyStatsRepository
 from handlers.registration.keyboards import get_start_registration_keyboard
-from handlers.add_food.utils import (
-    format_diary_compact,
-    get_main_diary_keyboard,
-)
+from handlers.start.utils import format_diary_compact, get_main_diary_keyboard  # меняем импорт
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -18,22 +15,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_repo = UserRepository(db)
     stats_repo = DailyStatsRepository(db)
 
-    # Проверяем, зарегистрирован ли пользователь
     is_registered = await user_repo.exists(user.id)
 
     if is_registered:
-        # Пользователь уже зарегистрирован — показываем дневник
         user_id = await user_repo.get_user_id(user.id)
         profile = await user_repo.get_profile(user_id)
-
-        # Получаем данные за сегодня из БД
         today_stats = await stats_repo.get_today_stats(user_id)
 
-        # Персонализация
         name = user.first_name or "друг"
         greeting = f"🥑 <b>С возвращением, {name}!</b>"
 
-        # Компактный формат дневника с реальными данными
         diary_text = format_diary_compact(
             daily_kcal=profile["daily_kcal"],
             current_kcal=today_stats.get("kcal", 0),
@@ -53,9 +44,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             reply_markup=get_main_diary_keyboard(),
             parse_mode="HTML"
         )
-
     else:
-        # Пользователь не зарегистрирован — начинаем регистрацию
         text = (
             "🥑 <b>Добро пожаловать в NutriMate!</b>\n\n"
             "Привет! Я — простой и удобный дневник питания и тренировок.\n\n"
@@ -110,7 +99,6 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_repo = UserRepository(db)
     stats_repo = DailyStatsRepository(db)
 
-    # Проверяем, зарегистрирован ли пользователь
     is_registered = await user_repo.exists(user.id)
 
     if not is_registered:
