@@ -1,8 +1,7 @@
 # db/models.py
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from db.database import Database
 import json
-from typing import List
 
 
 class UserRepository:
@@ -111,9 +110,7 @@ class RegistrationStateRepository:
                 "DELETE FROM registration_state WHERE telegram_id = ?",
                 (telegram_id,)
             )
-            
-            
-# db/models.py — добавить в конец файла
+
 
 class MealRepository:
     def __init__(self, db: Database):
@@ -230,3 +227,81 @@ class DailyStatsRepository:
                 "carbs": meal_stats["carbs"] or 0,
                 "water": water_stats["water_count"] or 0,
             }
+
+
+class HistoryRepository:
+    """Репозиторий для работы с историей записей (еда и вода)."""
+    
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def get_meals_for_date(self, user_id: int, date_str: str) -> List[Dict[str, Any]]:
+        """
+        Получает все приёмы пищи за указанную дату.
+        date_str в формате 'YYYY-MM-DD'
+        """
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                """SELECT id, meal_type, food_name, amount_g, kcal, 
+                          protein_g, fat_g, carbs_g, eaten_at
+                   FROM meals 
+                   WHERE user_id = ? AND DATE(eaten_at) = ?
+                   ORDER BY eaten_at ASC""",
+                (user_id, date_str)
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_water_for_date(self, user_id: int, date_str: str) -> List[Dict[str, Any]]:
+        """
+        Получает все записи о воде за указанную дату.
+        date_str в формате 'YYYY-MM-DD'
+        """
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                """SELECT id, amount_ml, logged_at
+                   FROM water_logs 
+                   WHERE user_id = ? AND DATE(logged_at) = ?
+                   ORDER BY logged_at ASC""",
+                (user_id, date_str)
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_dates_with_entries(self, user_id: int, limit: int = 30) -> List[str]:
+        """
+        Возвращает список дат (YYYY-MM-DD), за которые есть записи (еда или вода).
+        Ограничено последними `limit` днями.
+        """
+        async with self.db.connection() as conn:
+            # Получаем даты из meals
+            cursor = await conn.execute(
+                """SELECT DISTINCT DATE(eaten_at) as date
+                   FROM meals 
+                   WHERE user_id = ?
+                   ORDER BY date DESC
+                   LIMIT ?""",
+                (user_id, limit)
+            )
+            meal_dates = await cursor.fetchall()
+            
+            # Получаем даты из water_logs
+            cursor = await conn.execute(
+                """SELECT DISTINCT DATE(logged_at) as date
+                   FROM water_logs 
+                   WHERE user_id = ?
+                   ORDER BY date DESC
+                   LIMIT ?""",
+                (user_id, limit)
+            )
+            water_dates = await cursor.fetchall()
+            
+            # Объединяем и убираем дубликаты
+            dates = set()
+            for row in meal_dates:
+                dates.add(row["date"])
+            for row in water_dates:
+                dates.add(row["date"])
+            
+            # Сортируем от новых к старым
+            return sorted(list(dates), reverse=True)
