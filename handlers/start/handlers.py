@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from db.database import Database
 from db.models import UserRepository, DailyStatsRepository
 from handlers.registration.keyboards import get_start_registration_keyboard
-from handlers.start.utils import format_diary_compact, get_main_diary_keyboard  # меняем импорт
+from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -132,5 +132,30 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await query.edit_message_text(
         text,
         reply_markup=get_main_diary_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Показывает меню дополнительных действий по нажатию на кнопку ⋯
+    """
+    query = update.callback_query
+    await query.answer()
+
+    text = "Что хочешь сделать?"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏋️ Тренировка", callback_data="training_add")],
+        [InlineKeyboardButton("⚖️ Вес", callback_data="weight_add")],
+        [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
+        [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
+        [InlineKeyboardButton("← Назад", callback_data="diary_show")],
+    ])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard,
         parse_mode="HTML"
     )

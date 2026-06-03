@@ -1,12 +1,9 @@
-# handlers/start/keyboards.py
+# handlers/start/keyboards.py (опционально, если нужны другие клавиатуры)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 def get_diary_more_keyboard() -> InlineKeyboardMarkup:
-    """
-    Меню 'Ещё' — раскрывается по нажатию на кнопку ⋯ в дневнике.
-    Содержит все дополнительные действия.
-    """
+    """Меню 'Ещё' — раскрывается по нажатию на кнопку ⋯ в дневнике."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🏋️ Тренировка", callback_data="training_add")],
         [InlineKeyboardButton("⚖️ Вес", callback_data="weight_add")],
