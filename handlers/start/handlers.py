@@ -71,7 +71,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>Основные действия:</b>\n\n"
         "• <b>🍽️ Еда</b> — добавь приём пищи: фото, штрихкод, текст или избранное.\n"
         "• <b>💧 Вода</b> — быстрый +1 стакан, счётчик обновится сразу.\n"
-        "• <b>⋯</b> — меню дополнительных действий: тренировки, вес, прогресс, избранное, настройки.\n\n"
+        "• <b>⋯</b> — меню дополнительных действий: тренировки, вес, прогресс, избранное, история, настройки.\n\n"
         "<b>Лайфхаки:</b>\n"
         "• Просто пришли <b>фото еды</b> — я попробую распознать.\n"
         "• Напиши <b>текст</b> вида «омлет 200г» — я найду калорийность.\n"
@@ -149,6 +149,7 @@ async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("🏋️ Тренировка", callback_data="training_add")],
         [InlineKeyboardButton("⚖️ Вес", callback_data="weight_add")],
         [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
+        [InlineKeyboardButton("📜 История", callback_data="history_show")],  # <-- НОВАЯ КНОПКА
         [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
         [InlineKeyboardButton("← Назад", callback_data="diary_show")],
