@@ -11,105 +11,90 @@ logger = logging.getLogger(__name__)
 class OpenFoodFactsClient:
     """
     Клиент для работы с Open Food Facts API.
-    Приоритет для текстового поиска: Search-a-licious -> API V1.
+    
+    Реальность 2026 года:
+    - Search-a-licious (SAL) — единственный стабильный полнотекстовый поиск
+    - V1 и V2 для поиска часто возвращают 503 (серверы перегружены/блокируют)
+    - V2 для получения по баркоду работает стабильно
     """
-    
+
     SEARCH_URL_SAL = "https://search.openfoodfacts.org/search"
-    SEARCH_URL_V2 = "https://world.openfoodfacts.org/api/v2/search"
-    SEARCH_URL_V1 = "https://world.openfoodfacts.org/cgi/search.pl"
-    PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product"
-    
+    PRODUCT_URL_V2 = "https://world.openfoodfacts.org/api/v2/product"
+
     def __init__(self):
-        # Правильный User-Agent обязателен для OFF, иначе будет 503
+        # ОБЯЗАТЕЛЬНО: OFF блокирует запросы без правильного User-Agent
         headers = {
             "User-Agent": "NutriMateBot/1.0 (+https://t.me/nutrimatebot)",
             "Accept": "application/json",
         }
         self.client = httpx.AsyncClient(timeout=10.0, headers=headers)
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
-        self._cache_max_size = 100
-        
-        # Rate limiting и защита от 503
+        self._barcode_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        self._cache_max_size = 200
         self._last_request_time: float = 0
-        self._min_interval = 0.5  # 0.5 сек между запросами
-        self._failed_endpoints: Dict[str, float] = {}
-        self._endpoint_cooldown = 60
+        self._min_interval = 0.3  # 0.3 сек между запросами (безопасно)
 
     async def close(self):
         await self.client.aclose()
 
     async def _rate_limit(self):
+        """Мягкий rate limiting для защиты от банов."""
         now = datetime.now().timestamp()
         elapsed = now - self._last_request_time
         if elapsed < self._min_interval:
             await asyncio.sleep(self._min_interval - elapsed)
         self._last_request_time = datetime.now().timestamp()
 
-    def _is_endpoint_available(self, endpoint: str) -> bool:
-        if endpoint in self._failed_endpoints:
-            if datetime.now().timestamp() < self._failed_endpoints[endpoint]:
-                return False
-            del self._failed_endpoints[endpoint]
-        return True
-
-    def _mark_endpoint_failed(self, endpoint: str):
-        self._failed_endpoints[endpoint] = datetime.now().timestamp() + self._endpoint_cooldown
-        logger.warning(f"Endpoint {endpoint} marked as failed for {self._endpoint_cooldown}s")
-
     async def search_products(
         self,
         query: str,
         page: int = 1,
         page_size: int = 5,
-        retries: int = 1
     ) -> List[Dict[str, Any]]:
+        """
+        Полнотекстовый поиск через Search-a-licious (SAL).
+        Единственный надёжный источник в 2026 году.
+        """
         cache_key = f"{query}:{page}:{page_size}"
-        
+
         if cache_key in self._cache:
+            logger.debug(f"Cache hit: {query}")
             return self._cache[cache_key]
 
-        # 1. Search-a-licious (Самый быстрый и современный)
-        if self._is_endpoint_available("SAL"):
-            for attempt in range(retries + 1):
-                try:
-                    await self._rate_limit()
-                    products = await self._search_sal(query, page, page_size)
-                    if products:
-                        logger.info(f"SAL found {len(products)} products")
-                        self._add_to_cache(cache_key, products)
-                        return products
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in [503, 429]:
-                        self._mark_endpoint_failed("SAL")
-                        break
-                except Exception as e:
-                    logger.warning(f"SAL attempt {attempt + 1} failed: {e}")
-                    if attempt < retries:
-                        await asyncio.sleep(0.3 * (attempt + 1))
-
-        # 2. API V1 (Legacy fallback)
-        if self._is_endpoint_available("V1"):
-            for attempt in range(retries + 1):
-                try:
-                    await self._rate_limit()
-                    products = await self._search_v1(query, page, page_size)
-                    if products:
-                        logger.info(f"V1 found {len(products)} products")
-                        self._add_to_cache(cache_key, products)
-                        return products
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code in [503, 429]:
-                        self._mark_endpoint_failed("V1")
-                        break
-                except Exception as e:
-                    logger.error(f"V1 attempt {attempt + 1} failed: {e}")
-                    if attempt < retries:
-                        await asyncio.sleep(0.3 * (attempt + 1))
+        try:
+            await self._rate_limit()
+            products = await self._search_sal(query, page, page_size)
+            if products:
+                logger.info(f"SAL found {len(products)} products for '{query}'")
+                self._add_to_cache(cache_key, products)
+                return products
+            logger.warning(f"SAL returned 0 products for '{query}'")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"SAL HTTP error: {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"SAL request failed: {e}")
 
         return []
 
     async def _search_sal(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
-        """Поиск через Search-a-licious. ИСПРАВЛЕНО: SAL возвращает list или dict с hits."""
+        """
+        Поиск через Search-a-licious.
+        
+        РЕАЛЬНЫЙ формат ответа (проверено тестами):
+        {
+            "hits": [ {...product1}, {...product2} ],  ← массив ПРЯМЫХ продуктов
+            "count": 17,
+            "page": 1,
+            "page_size": 5,
+            "page_count": 4,
+            ...
+        }
+        
+        Каждый продукт в hits имеет поля:
+        - code, product_name, product_name_ru, brands (list), quantity
+        - nutriments: {energy-kcal_100g, proteins_100g, fat_100g, carbohydrates_100g}
+        - image_url
+        """
         params = {
             "q": query,
             "page": page,
@@ -119,107 +104,153 @@ class OpenFoodFactsClient:
         response = await self.client.get(self.SEARCH_URL_SAL, params=params)
         response.raise_for_status()
         data = response.json()
-        
+
         products = []
         
-        # ГЛАВНОЕ ИСПРАВЛЕНИЕ: SAL часто возвращает просто массив (list) объектов!
-        if isinstance(data, list):
-            for item in data:
-                parsed = self._parse_product(item)
-                if parsed and parsed.get("kcal_100g"):
-                    products.append(parsed)
-        elif isinstance(data, dict):
-            # Если вернулся словарь, ищем продукты в разных ключах
-            if "products" in data:
-                for item in data.get("products", []):
-                    parsed = self._parse_product(item)
-                    if parsed and parsed.get("kcal_100g"):
-                        products.append(parsed)
-            elif "hits" in data:
-                for hit in data.get("hits", {}).get("hits", []):
-                    item = hit.get("_source", {})
-                    parsed = self._parse_product(item)
-                    if parsed and parsed.get("kcal_100g"):
-                        products.append(parsed)
-                        
+        # SAL всегда возвращает dict с ключом 'hits' (массив прямых продуктов)
+        hits = data.get("hits", [])
+        
+        if not isinstance(hits, list):
+            logger.warning(f"SAL returned unexpected hits type: {type(hits)}")
+            return []
+
+        for item in hits:
+            parsed = self._parse_sal_product(item)
+            if parsed and parsed.get("kcal_100g") and parsed.get("kcal_100g") > 0:
+                products.append(parsed)
+
         return products[:page_size]
 
-    async def _search_v1(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
-        params = {
-            "search_terms": query,
-            "search_simple": 1,
-            "action": "process",
-            "json": 1,
-            "page": page,
-            "page_size": page_size,
-        }
-
-        response = await self.client.get(self.SEARCH_URL_V1, params=params)
-        response.raise_for_status()
-        data = response.json()
-        return self._parse_products(data)
-
-    async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
-        try:
-            await self._rate_limit()
-            response = await self.client.get(f"{self.PRODUCT_URL}/{barcode}.json")
-            response.raise_for_status()
-            data = response.json()
-            product = data.get("product")
-            if product and product.get("nutriments"):
-                return self._parse_product(product)
-            return None
-        except Exception as e:
-            logger.error(f"Barcode lookup failed for {barcode}: {e}")
-            return None
-
-    def _parse_products(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        products = []
-        if not isinstance(data, dict):
-            return products
-        for product in data.get("products", []):
-            parsed = self._parse_product(product)
-            if parsed and parsed.get("kcal_100g"):
-                products.append(parsed)
-        return products
-
-    def _parse_product(self, product: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _parse_sal_product(self, product: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Парсит продукт из SAL ответа."""
         if not isinstance(product, dict):
             return None
-            
+
         nutriments = product.get("nutriments", {})
         if not isinstance(nutriments, dict):
             return None
-        
+
+        # В SAL ключ kcal может быть "energy-kcal_100g"
         kcal_100g = nutriments.get("energy-kcal_100g") or nutriments.get("energy-kcal")
         if not kcal_100g:
+            return None
+
+        try:
+            kcal_val = float(kcal_100g)
+        except (ValueError, TypeError):
             return None
 
         protein_100g = nutriments.get("proteins_100g", 0) or 0
         fat_100g = nutriments.get("fat_100g", 0) or 0
         carbs_100g = nutriments.get("carbohydrates_100g", 0) or 0
 
+        # В SAL есть product_name_ru для русских продуктов
+        name = (product.get("product_name_ru") or 
+                product.get("product_name") or 
+                "Неизвестный продукт")
+
+        # brands в SAL может быть списком или строкой
+        brands = product.get("brands", "")
+        if isinstance(brands, list):
+            brands = ", ".join(brands) if brands else ""
+        elif not isinstance(brands, str):
+            brands = ""
+
         quantity = product.get("quantity")
         default_weight = self._parse_default_weight(quantity)
 
         return {
             "code": product.get("code", ""),
-            "name": product.get("product_name", "Неизвестный продукт"),
-            "brand": product.get("brands", ""),
+            "name": name,
+            "brand": brands,
             "quantity": quantity,
             "default_weight": default_weight,
-            "kcal_100g": float(kcal_100g),
-            "protein_100g": float(protein_100g),
-            "fat_100g": float(fat_100g),
-            "carbs_100g": float(carbs_100g),
-            "image_url": product.get("image_url"),
+            "kcal_100g": kcal_val,
+            "protein_100g": float(protein_100g) if protein_100g else 0.0,
+            "fat_100g": float(fat_100g) if fat_100g else 0.0,
+            "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
+            "image_url": product.get("image_url") or product.get("image_front_url"),
+        }
+
+    async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
+        """
+        Получение продукта по штрихкоду через API V2.
+        Работает стабильно (проверено тестами).
+        """
+        if barcode in self._barcode_cache:
+            return self._barcode_cache[barcode]
+
+        try:
+            await self._rate_limit()
+            response = await self.client.get(f"{self.PRODUCT_URL_V2}/{barcode}.json")
+            response.raise_for_status()
+            data = response.json()
+
+            product_data = data.get("product")
+            if not product_data:
+                self._barcode_cache[barcode] = None
+                return None
+
+            parsed = self._parse_v2_product(product_data)
+            self._barcode_cache[barcode] = parsed
+            return parsed
+        except Exception as e:
+            logger.error(f"Barcode lookup failed for {barcode}: {e}")
+            self._barcode_cache[barcode] = None
+            return None
+
+    def _parse_v2_product(self, product: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Парсит продукт из V2 ответа (barcode lookup)."""
+        if not isinstance(product, dict):
+            return None
+
+        nutriments = product.get("nutriments", {})
+        if not isinstance(nutriments, dict):
+            return None
+
+        kcal_100g = nutriments.get("energy-kcal_100g") or nutriments.get("energy-kcal")
+        if not kcal_100g:
+            return None
+
+        try:
+            kcal_val = float(kcal_100g)
+        except (ValueError, TypeError):
+            return None
+
+        protein_100g = nutriments.get("proteins_100g", 0) or 0
+        fat_100g = nutriments.get("fat_100g", 0) or 0
+        carbs_100g = nutriments.get("carbohydrates_100g", 0) or 0
+
+        name = product.get("product_name") or "Неизвестный продукт"
+        brands = product.get("brands", "")
+        if not isinstance(brands, str):
+            brands = ""
+
+        quantity = product.get("quantity")
+        default_weight = self._parse_default_weight(quantity)
+
+        return {
+            "code": product.get("code", ""),
+            "name": name,
+            "brand": brands,
+            "quantity": quantity,
+            "default_weight": default_weight,
+            "kcal_100g": kcal_val,
+            "protein_100g": float(protein_100g) if protein_100g else 0.0,
+            "fat_100g": float(fat_100g) if fat_100g else 0.0,
+            "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
+            "image_url": product.get("image_url") or product.get("image_front_url"),
         }
 
     def _parse_default_weight(self, quantity: Optional[Any]) -> float:
+        """Извлекает вес из строки формата '500 g', '400гр.', '1 kg'."""
         if not quantity:
             return 100.0
-            
-        match = re.search(r"(\d+(?:\.\d+)?)\s*(g|kg|ml|l|мл|кг|г)", str(quantity).lower())
+
+        match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(g|гр|грамм|kg|кг|ml|мл|l|л)",
+            str(quantity).lower()
+        )
         if match:
             value = float(match.group(1))
             unit = match.group(2)
@@ -227,10 +258,13 @@ class OpenFoodFactsClient:
                 return value * 1000
             if unit in ("l", "л"):
                 return value * 1000
+            if unit in ("ml", "мл"):
+                return value  # считаем 1мл = 1г для простоты
             return value
         return 100.0
 
     def calculate_for_weight(self, product: Dict[str, Any], weight: float) -> Dict[str, Any]:
+        """Пересчитывает КБЖУ на указанный вес в граммах."""
         multiplier = weight / 100.0
         return {
             "code": product.get("code", ""),
@@ -245,6 +279,7 @@ class OpenFoodFactsClient:
         }
 
     def _add_to_cache(self, key: str, products: List[Dict[str, Any]]):
+        """LRU-кэш для результатов поиска."""
         if key in self._cache:
             return
         if len(self._cache) >= self._cache_max_size:
