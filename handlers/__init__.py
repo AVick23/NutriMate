@@ -7,7 +7,8 @@ from handlers.registration import get_registration_conversation_handler
 from handlers.add_food import get_add_food_conversation_handler
 from handlers.history_of_add import get_history_conversation_handler
 from handlers.water import get_water_handler
-from handlers.measurements import get_measurements_handler  # <-- ДОБАВИТЬ
+from handlers.measurements import get_measurements_handler
+from handlers.settings import get_settings_handler  # <-- ДОБАВИТЬ
 
 
 def register_all_handlers(app: Application, db: Database) -> None:
@@ -37,4 +38,7 @@ def register_all_handlers(app: Application, db: Database) -> None:
     app.add_handler(get_water_handler(db))
     
     # ConversationHandler для замеров тела
-    app.add_handler(get_measurements_handler(db))  # <-- ДОБАВИТЬ
+    app.add_handler(get_measurements_handler(db))
+    
+    # ConversationHandler для настроек
+    app.add_handler(get_settings_handler(db))  # <-- ДОБАВИТЬ
