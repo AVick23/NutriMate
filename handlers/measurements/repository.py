@@ -97,10 +97,10 @@ class MeasurementsRepository:
         async with self.db.connection() as conn:
             cursor = await conn.execute(
                 """SELECT id, value, measured_at, notes
-                   FROM body_measurements 
-                   WHERE user_id = ? AND measurement_type_id = ?
-                   ORDER BY measured_at DESC
-                   LIMIT ?""",
+                FROM body_measurements 
+                WHERE user_id = ? AND measurement_type_id = ?
+                ORDER BY measured_at DESC
+                LIMIT ?""",
                 (user_id, measurement_type_id, limit)
             )
             rows = await cursor.fetchall()

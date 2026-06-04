@@ -24,7 +24,7 @@ def format_date_ru(dt: datetime) -> str:
 def calculate_trend(measurements: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Рассчитывает тренд на основе истории замеров.
-    Возвращает: weekly_rate, direction, stability, best_value, worst_value
+    Ожидает список с ключами 'value' и 'measured_at' (или 'date').
     """
     if len(measurements) < 2:
         return {
@@ -36,10 +36,32 @@ def calculate_trend(measurements: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
     
     values = [m["value"] for m in measurements]
-    dates = [datetime.fromisoformat(m["date"].replace(' ', 'T')) for m in measurements]
+    
+    # Поддерживаем оба варианта: 'measured_at' и 'date'
+    dates = []
+    for m in measurements:
+        if "measured_at" in m:
+            date_str = m["measured_at"]
+        elif "date" in m:
+            date_str = m["date"]
+        else:
+            # Если нет даты, используем порядковый номер
+            dates.append(len(dates))
+            continue
+        
+        # Парсим дату
+        if isinstance(date_str, datetime):
+            dates.append(date_str)
+        elif isinstance(date_str, str):
+            try:
+                dates.append(datetime.fromisoformat(date_str.replace(' ', 'T')))
+            except:
+                dates.append(datetime.now())
+        else:
+            dates.append(datetime.now())
     
     # Простая линейная регрессия
-    x = [(d - min(dates)).days for d in dates]
+    x = [(d - min(dates)).days for d in dates] if dates else list(range(len(values)))
     y = values
     n = len(x)
     
@@ -59,13 +81,16 @@ def calculate_trend(measurements: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     # Стабильность
     if len(measurements) >= 4:
-        deviation = statistics.stdev(values)
-        if deviation < 0.3:
-            stability = "high"
-        elif deviation < 0.8:
-            stability = "medium"
-        else:
-            stability = "low"
+        try:
+            deviation = statistics.stdev(values)
+            if deviation < 0.3:
+                stability = "high"
+            elif deviation < 0.8:
+                stability = "medium"
+            else:
+                stability = "low"
+        except:
+            stability = "insufficient"
     else:
         stability = "insufficient"
     
@@ -89,7 +114,8 @@ def get_smart_feedback(
     """Генерирует умное сообщение после добавления замера."""
     
     if previous_value is None:
-        return f"✅ <b>Первый замер сохранён!</b>\n📏 {measurement_name}: {new_value:.1f} {_get_unit(measurement_type_id)}\nПродолжай отслеживать прогресс!"
+        unit = "кг" if measurement_type_id == 1 else "см"
+        return f"✅ <b>Первый замер сохранён!</b>\n📏 {measurement_name}: {new_value:.1f} {unit}\nПродолжай отслеживать прогресс!"
     
     change = new_value - previous_value
     abs_change = abs(change)
@@ -98,11 +124,11 @@ def get_smart_feedback(
     if measurement_type_id == 1:  # weight
         if change < 0:
             if trend["weekly_rate"] < -1.5:
-                return f"⚠️ <b>Быстрая потеря веса</b> ({trend['weekly_rate']:.1f} кг/нед)\nУбедись, что ты получаешь достаточно калорий и белка. Здоровый темп – 0.5-1 кг/нед."
+                return f"⚠️ <b>Быстрая потеря веса</b> ({abs(trend['weekly_rate']):.1f} кг/нед)\nУбедись, что ты получаешь достаточно калорий и белка. Здоровый темп – 0.5-1 кг/нед."
             elif trend["weekly_rate"] < -0.8:
-                return f"🔥 <b>Отличный темп!</b> {trend['weekly_rate']:.1f} кг/нед\nТак держать! 💪"
+                return f"🔥 <b>Отличный темп!</b> {abs(trend['weekly_rate']):.1f} кг/нед\nТак держать! 💪"
             else:
-                return f"✅ <b>-{abs_change:.1f} кг</b>\nСредняя скорость: {trend['weekly_rate']:.1f} кг/нед. Продолжай!"
+                return f"✅ <b>-{abs_change:.1f} кг</b>\nСредняя скорость: {abs(trend['weekly_rate']):.1f} кг/нед. Продолжай!"
         elif change > 0:
             return f"📈 <b>+{abs_change:.1f} кг</b>\nЭто может быть задержка воды или набор мышц. Смотри на объёмы и отражение в зеркале."
         else:
@@ -127,12 +153,6 @@ def get_measurement_type_info(type_id: int) -> Dict[str, Any]:
     return MEASUREMENT_TYPES.get(type_id, {})
 
 
-def _get_unit(type_id: int) -> str:
-    """Возвращает единицу измерения для типа замера."""
-    info = get_measurement_type_info(type_id)
-    return info.get("unit", "")
-
-
 def format_history_message(
     measurement_type_id: int,
     measurement_name: str,
@@ -146,8 +166,17 @@ def format_history_message(
     text = f"📋 <b>История замеров: {measurement_name}</b>\n\n"
     
     for i, record in enumerate(history):
-        dt = datetime.fromisoformat(record["measured_at"].replace(' ', 'T'))
-        date_str = format_date_ru(dt)
+        # Получаем дату из поля measured_at
+        date_str = record.get("measured_at") or record.get("date")
+        if date_str:
+            if isinstance(date_str, str):
+                dt = datetime.fromisoformat(date_str.replace(' ', 'T'))
+            else:
+                dt = date_str
+        else:
+            dt = datetime.now()
+        
+        date_str_ru = format_date_ru(dt)
         value = record["value"]
         
         # Показываем разницу с предыдущим
@@ -159,7 +188,7 @@ def format_history_message(
         else:
             diff_str = ""
         
-        text += f"• <b>{date_str}</b> – {value:.1f} {unit}{diff_str}\n"
+        text += f"• <b>{date_str_ru}</b> – {value:.1f} {unit}{diff_str}\n"
     
     # Добавляем аналитику, если достаточно данных
     if len(history) >= 2:
@@ -197,23 +226,10 @@ def format_main_menu_message(
             text += f"• {info['emoji']} {info['display']}: <i>нет данных</i>\n"
     
     # Добавляем аналитику по весу (если есть)
-    if 1 in last_measurements and len(last_measurements) > 0:
-        weight_measurements = last_measurements.get(1, {})
-        if "history" in weight_measurements:
-            trend = calculate_trend(weight_measurements["history"])
-            if trend["weekly_rate"] != 0 and trend["direction"] != "insufficient":
-                text += f"\n📊 <b>Аналитика:</b>\n"
-                if trend["weekly_rate"] < 0:
-                    text += f"▸ Теряешь в среднем {abs(trend['weekly_rate']):.1f} кг/нед\n"
-                    if 1 in goals:
-                        goal = goals[1]
-                        current = weight_measurements.get("value", 0)
-                        remaining = current - goal
-                        if remaining > 0:
-                            weeks = remaining / abs(trend["weekly_rate"]) if trend["weekly_rate"] != 0 else 0
-                            text += f"▸ До цели {goal:.1f} кг осталось ~{int(weeks)} недель\n"
-                elif trend["weekly_rate"] > 0:
-                    text += f"▸ Вес увеличивается на {trend['weekly_rate']:.1f} кг/нед\n"
+    if 1 in last_measurements:
+        text += f"\n📊 <b>Совет дня:</b>\n"
+        text += f"▸ Регулярно записывай замеры, чтобы видеть прогресс!\n"
+        text += f"▸ Взвешивайся в одно и то же время, утром натощак.\n"
     
     return text
 
