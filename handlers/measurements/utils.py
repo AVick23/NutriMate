@@ -242,3 +242,65 @@ def get_quick_values_for_type(measurement_type_id: int) -> List[float]:
         return QUICK_WEIGHT_VALUES
     else:
         return QUICK_CIRCUMFERENCE_VALUES
+    
+
+# handlers/measurements/utils.py - добавить в конец файла
+
+def get_waist_risk_category(waist_cm: float, gender: str) -> dict:
+    """
+    Оценивает риск для здоровья по окружности талии согласно рекомендациям ВОЗ.
+    Возвращает категорию и цветовую маркировку.
+    """
+    if gender == "male":
+        if waist_cm < 94:
+            return {
+                "category": "Норма",
+                "risk": "Низкий",
+                "color": "🟢",
+                "message": "Твоя талия в пределах нормы. Отличный результат!"
+            }
+        elif waist_cm < 102:
+            return {
+                "category": "Повышенная",
+                "risk": "Средний",
+                "color": "🟡",
+                "message": "Талия превышает норму. Это связано с повышенным риском сердечно-сосудистых заболеваний. Рекомендуется увеличить физическую активность и скорректировать питание."
+            }
+        else:
+            return {
+                "category": "Высокая",
+                "risk": "Высокий",
+                "color": "🔴",
+                "message": "Талия значительно превышает норму! Это существенно повышает риск диабета, гипертонии и болезней сердца. Рекомендуется проконсультироваться с врачом."
+            }
+    else:
+        if waist_cm < 80:
+            return {
+                "category": "Норма",
+                "risk": "Низкий",
+                "color": "🟢",
+                "message": "Твоя талия в пределах нормы. Отличный результат!"
+            }
+        elif waist_cm < 88:
+            return {
+                "category": "Повышенная",
+                "risk": "Средний",
+                "color": "🟡",
+                "message": "Талия превышает норму. Это связано с повышенным риском сердечно-сосудистых заболеваний. Рекомендуется увеличить физическую активность и скорректировать питание."
+            }
+        else:
+            return {
+                "category": "Высокая",
+                "risk": "Высокий",
+                "color": "🔴",
+                "message": "Талия значительно превышает норму! Это существенно повышает риск диабета, гипертонии и болезней сердца. Рекомендуется проконсультироваться с врачом."
+            }
+
+
+def format_waist_risk_message(measurement_name: str, value: float, gender: str) -> str:
+    """Форматирует сообщение с риском по талии."""
+    if measurement_name != "waist":
+        return ""
+    
+    risk = get_waist_risk_category(value, gender)
+    return f"\n\n{risk['color']} <b>Оценка риска ВОЗ:</b> {risk['category']}\n{risk['message']}"

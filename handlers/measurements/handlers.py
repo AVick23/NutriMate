@@ -23,7 +23,7 @@ from .keyboards import (
 )
 from .utils import (
     get_smart_feedback, format_history_message, format_main_menu_message,
-    get_measurement_type_info, calculate_trend
+    get_measurement_type_info, calculate_trend, format_waist_risk_message
 )
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,6 @@ class MeasurementsHandlers:
 
     async def handle_value_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Обрабатывает ввод значения (через кнопки или текст)."""
-        # Проверяем, это callback или обычное сообщение
         if update.callback_query:
             query = update.callback_query
             await query.answer()
@@ -154,7 +153,6 @@ class MeasurementsHandlers:
                 )
                 return STATE_ENTER_VALUE
         
-        # Обработка текстового ввода (своё значение)
         elif update.message:
             text = update.message.text.strip()
             try:
@@ -202,6 +200,14 @@ class MeasurementsHandlers:
             previous_value,
             trend
         )
+        
+        # Добавляем оценку риска по талии (согласно рекомендациям ВОЗ)
+        if info["name"] == "waist":
+            profile = await self.user_repo.get_profile(user_id)
+            if profile:
+                gender = profile["gender"]
+                risk_message = format_waist_risk_message(info["name"], value, gender)
+                feedback += risk_message
         
         # Отправляем сообщение в зависимости от типа ввода
         if is_callback and update.callback_query:
@@ -264,6 +270,15 @@ class MeasurementsHandlers:
         info = get_measurement_type_info(type_id)
         
         text = format_history_message(type_id, info["display"], history, info["unit"])
+        
+        # Добавляем оценку риска по талии для последнего замера
+        if info["name"] == "waist" and history:
+            profile = await self.user_repo.get_profile(user_id)
+            if profile:
+                gender = profile["gender"]
+                last_value = history[0]["value"]
+                risk_message = format_waist_risk_message(info["name"], last_value, gender)
+                text += f"\n\n{risk_message}"
         
         await query.edit_message_text(
             text,

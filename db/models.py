@@ -211,9 +211,9 @@ class DailyStatsRepository:
             )
             meal_stats = await cursor.fetchone()
 
-            # Вода
+            # Вода (в миллилитрах)
             cursor = await conn.execute(
-                """SELECT COUNT(*) as water_count
+                """SELECT COALESCE(SUM(amount_ml), 0) as water_ml
                    FROM water_logs 
                    WHERE user_id = ? AND DATE(logged_at) = ?""",
                 (user_id, today)
@@ -225,7 +225,7 @@ class DailyStatsRepository:
                 "protein": meal_stats["protein"] or 0,
                 "fat": meal_stats["fat"] or 0,
                 "carbs": meal_stats["carbs"] or 0,
-                "water": water_stats["water_count"] or 0,
+                "water_ml": water_stats["water_ml"] or 0,
             }
 
 class WaterRepository:

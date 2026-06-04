@@ -7,7 +7,7 @@ from db.database import Database
 from db.models import UserRepository, WaterRepository, DailyStatsRepository
 
 from .constants import STATE_SELECT_VOLUME, DEFAULT_WATER_ML
-from .utils import get_water_status_text
+from .utils import get_water_status_text, calculate_water_goal
 from .keyboards import get_water_volume_keyboard
 
 logger = logging.getLogger(__name__)
@@ -27,35 +27,34 @@ class WaterHandlers:
         query = update.callback_query
         user = update.effective_user
         
-        # Получаем user_id
         user_id = await self.user_repo.get_user_id(user.id)
         if not user_id:
             await query.answer("❌ Ошибка: пользователь не найден", show_alert=True)
             return
         
-        # Добавляем воду
         await self.water_repo.add_water(user_id, DEFAULT_WATER_ML)
         
-        # Получаем обновлённую статистику
-        today_stats = await self.stats_repo.get_today_stats(user_id)
-        water_goal = 8
-        water_count = today_stats.get("water", 0)
-        status_text = get_water_status_text(water_count, water_goal)
+        # Получаем профиль для расчёта нормы воды
+        profile = await self.user_repo.get_profile(user_id)
+        if profile:
+            water_goal = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+        else:
+            water_goal = 2000  # запасной вариант
         
-        # Отвечаем тостом
+        today_stats = await self.stats_repo.get_today_stats(user_id)
+        water_count_ml = today_stats.get("water_ml", 0)
+        status_text = get_water_status_text(water_count_ml, water_goal)
+        
         await query.answer(
-            f"💧 +1 стакан ({DEFAULT_WATER_ML} мл)\n{status_text}",
+            f"💧 +{DEFAULT_WATER_ML} мл\n{status_text}",
             show_alert=False
         )
         
-        # Обновляем дневник
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
 
     async def show_volume_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """
-        Показывает меню выбора объёма воды.
-        """
+        """Показывает меню выбора объёма воды."""
         query = update.callback_query
         await query.answer()
         
@@ -72,14 +71,11 @@ class WaterHandlers:
         return STATE_SELECT_VOLUME
 
     async def add_water_with_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """
-        Добавляет воду с выбранным объёмом.
-        """
+        """Добавляет воду с выбранным объёмом."""
         query = update.callback_query
         user = update.effective_user
         data = query.data
         
-        # Извлекаем объём
         if data == "water_vol_custom":
             await query.edit_message_text(
                 "✏️ <b>Введи объём в миллилитрах</b>\n\n"
@@ -94,7 +90,6 @@ class WaterHandlers:
             await query.answer("❌ Ошибка", show_alert=True)
             return ConversationHandler.END
         
-        # Добавляем воду
         user_id = await self.user_repo.get_user_id(user.id)
         if not user_id:
             await query.answer("❌ Пользователь не найден", show_alert=True)
@@ -102,27 +97,27 @@ class WaterHandlers:
         
         await self.water_repo.add_water(user_id, volume)
         
-        # Получаем обновлённую статистику
-        today_stats = await self.stats_repo.get_today_stats(user_id)
-        water_goal = 8
-        water_count = today_stats.get("water", 0)
-        status_text = get_water_status_text(water_count, water_goal)
+        profile = await self.user_repo.get_profile(user_id)
+        if profile:
+            water_goal = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+        else:
+            water_goal = 2000
         
-        # Отвечаем тостом
+        today_stats = await self.stats_repo.get_today_stats(user_id)
+        water_count_ml = today_stats.get("water_ml", 0)
+        status_text = get_water_status_text(water_count_ml, water_goal)
+        
         await query.answer(
             f"💧 +{volume} мл\n{status_text}",
             show_alert=False
         )
         
-        # Возвращаемся в дневник
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
         return ConversationHandler.END
 
     async def process_custom_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """
-        Обрабатывает ввод своего объёма воды.
-        """
+        """Обрабатывает ввод своего объёма воды."""
         user = update.effective_user
         text = update.message.text.strip()
         
@@ -136,7 +131,6 @@ class WaterHandlers:
             
             if volume <= 0 or volume > 5000:
                 raise ValueError
-            
             volume = int(volume)
             
         except ValueError:
@@ -147,22 +141,25 @@ class WaterHandlers:
             )
             return STATE_SELECT_VOLUME
         
-        # Добавляем воду
         user_id = await self.user_repo.get_user_id(user.id)
         if user_id:
             await self.water_repo.add_water(user_id, volume)
             
+            profile = await self.user_repo.get_profile(user_id)
+            if profile:
+                water_goal = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+            else:
+                water_goal = 2000
+            
             today_stats = await self.stats_repo.get_today_stats(user_id)
-            water_count = today_stats.get("water", 0)
-            water_goal = 8
-            status_text = get_water_status_text(water_count, water_goal)
+            water_count_ml = today_stats.get("water_ml", 0)
+            status_text = get_water_status_text(water_count_ml, water_goal)
             
             await update.message.reply_text(
                 f"💧 <b>Добавлено {volume} мл</b>\n{status_text}",
                 parse_mode="HTML"
             )
         
-        # Показываем дневник
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
         return ConversationHandler.END
@@ -178,9 +175,7 @@ class WaterHandlers:
 
 
 def get_water_handler(db: Database) -> ConversationHandler:
-    """
-    Создаёт ConversationHandler для управления водой.
-    """
+    """Создаёт ConversationHandler для управления водой."""
     handlers = WaterHandlers(db)
     
     return ConversationHandler(

@@ -67,10 +67,10 @@ def format_diary_compact(
     current_fat: float,
     carbs_goal: int,
     current_carbs: float,
-    water_current: int,
-    water_goal: int = 8
+    water_current_ml: int,
+    water_goal_ml: int,
 ) -> str:
-    """Компактный формат дневника."""
+    """Компактный формат дневника с водой в миллилитрах."""
     months = {
         1: "января", 2: "февраля", 3: "марта", 4: "апреля",
         5: "мая", 6: "июня", 7: "июля", 8: "августа",
@@ -87,8 +87,7 @@ def format_diary_compact(
     kcal_percent = int((current_kcal / daily_kcal) * 100) if daily_kcal > 0 else 0
     kcal_bar = format_progress_bar(current_kcal, daily_kcal)
     
-    # Прогресс-бар воды (8 стаканов = 8 сегментов)
-    water_bar = format_progress_bar(water_current, water_goal, length=8)
+    water_bar = format_progress_bar(water_current_ml, water_goal_ml, length=8)
 
     return (
         f"📅 <b>{date_str}</b>\n\n"
@@ -97,7 +96,7 @@ def format_diary_compact(
         f"🍗 {current_protein:.0f}/{protein_goal}г  ·  "
         f"🥑 {current_fat:.0f}/{fat_goal}г  ·  "
         f"🍚 {current_carbs:.0f}/{carbs_goal}г\n\n"
-        f"💧 {water_current} / {water_goal} стаканов\n"
+        f"💧 {water_current_ml} / {water_goal_ml} мл\n"
         f"{water_bar}\n\n"
         f"━━━━━━━━━━━━━━━━━━━"
     )

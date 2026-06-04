@@ -6,6 +6,7 @@ from db.database import Database
 from db.models import UserRepository, DailyStatsRepository
 from handlers.registration.keyboards import get_start_registration_keyboard
 from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
+from handlers.water.utils import calculate_water_goal
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -22,6 +23,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         profile = await user_repo.get_profile(user_id)
         today_stats = await stats_repo.get_today_stats(user_id)
 
+        # Рассчитываем норму воды
+        water_goal_ml = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+        water_current_ml = today_stats.get("water_ml", 0)
+
         name = user.first_name or "друг"
         greeting = f"🥑 <b>С возвращением, {name}!</b>"
 
@@ -34,7 +39,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             current_fat=today_stats.get("fat", 0),
             carbs_goal=profile["daily_carbs_g"],
             current_carbs=today_stats.get("carbs", 0),
-            water_current=today_stats.get("water", 0),
+            water_current_ml=water_current_ml,
+            water_goal_ml=water_goal_ml,
         )
 
         text = f"{greeting}\n\n{diary_text}"
@@ -112,6 +118,10 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     profile = await user_repo.get_profile(user_id)
     today_stats = await stats_repo.get_today_stats(user_id)
 
+    # Рассчитываем норму воды
+    water_goal_ml = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+    water_current_ml = today_stats.get("water_ml", 0)
+
     name = user.first_name or "друг"
     greeting = f"🥑 <b>С возвращением, {name}!</b>"
 
@@ -124,7 +134,8 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         current_fat=today_stats.get("fat", 0),
         carbs_goal=profile["daily_carbs_g"],
         current_carbs=today_stats.get("carbs", 0),
-        water_current=today_stats.get("water", 0),
+        water_current_ml=water_current_ml,
+        water_goal_ml=water_goal_ml,
     )
 
     text = f"{greeting}\n\n{diary_text}"
@@ -149,7 +160,7 @@ async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("🏋️ Тренировка", callback_data="training_add")],
         [InlineKeyboardButton("📏 Замеры тела", callback_data="measurements_menu")],
         [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
-        [InlineKeyboardButton("📜 История", callback_data="history_show")],  # <-- НОВАЯ КНОПКА
+        [InlineKeyboardButton("📜 История", callback_data="history_show")],
         [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
         [InlineKeyboardButton("← Назад", callback_data="diary_show")],

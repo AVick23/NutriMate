@@ -1,8 +1,8 @@
 # handlers/water/utils.py
-from .constants import EMOJI_WATER, EMOJI_WATER_FULL, EMOJI_WATER_EXCESS, DEFAULT_WATER_GOAL
+from .constants import EMOJI_WATER, EMOJI_WATER_FULL, EMOJI_WATER_EXCESS
 
 
-def format_water_progress(current: int, goal: int = DEFAULT_WATER_GOAL, length: int = 8) -> str:
+def format_water_progress(current: int, goal: int, length: int = 8) -> str:
     """
     Форматирует прогресс-бар воды.
     Возвращает строку из ▰ и ▱.
@@ -15,7 +15,7 @@ def format_water_progress(current: int, goal: int = DEFAULT_WATER_GOAL, length: 
     return "▰" * filled + "▱" * (length - filled)
 
 
-def get_water_emoji(current: int, goal: int = DEFAULT_WATER_GOAL) -> str:
+def get_water_emoji(current: int, goal: int) -> str:
     """
     Возвращает эмодзи в зависимости от прогресса воды.
     """
@@ -26,27 +26,43 @@ def get_water_emoji(current: int, goal: int = DEFAULT_WATER_GOAL) -> str:
     return EMOJI_WATER
 
 
-def get_water_status_text(current: int, goal: int = DEFAULT_WATER_GOAL) -> str:
+def calculate_water_goal(weight_kg: float, gender: str) -> int:
+    """
+    Рассчитывает норму воды по формуле EFSA (Европейское агентство по безопасности пищевых продуктов).
+    Мужчины: 35 мл × вес (кг)
+    Женщины: 30 мл × вес (кг)
+    Возвращает количество миллилитров.
+    """
+    if gender == "male":
+        return int(weight_kg * 35)
+    else:
+        return int(weight_kg * 30)
+
+
+def get_water_status_text(current: int, goal: int) -> str:
     """
     Возвращает текст статуса воды.
+    goal — в миллилитрах.
     """
     if current == 0:
-        return "Начни день со стакана воды! 💧"
+        return f"Начни день со стакана воды! 💧 (норма: {goal} мл)"
     elif current < goal:
-        remaining = goal - current
-        word = "стакан" if remaining == 1 else "стакана" if 2 <= remaining <= 4 else "стаканов"
-        return f"Осталось {remaining} {word} до цели 💙"
+        remaining_ml = goal - current
+        remaining_glasses = remaining_ml // 250
+        word = "стакан" if remaining_glasses == 1 else "стакана" if 2 <= remaining_glasses <= 4 else "стаканов"
+        return f"Осталось {remaining_ml} мл ({remaining_glasses} {word}) до нормы 💙"
     elif current == goal:
-        return "Отлично! Дневная норма выполнена! 🎉💙"
+        return f"Отлично! Дневная норма {goal} мл выполнена! 🎉💙"
     else:
         excess = current - goal
-        word = "стакан" if excess == 1 else "стакана" if 2 <= excess <= 4 else "стаканов"
-        return f"Ты выпил на {excess} {word} больше нормы! 💦"
+        excess_glasses = excess // 250
+        word = "стакан" if excess_glasses == 1 else "стакана" if 2 <= excess_glasses <= 4 else "стаканов"
+        return f"Ты выпил на {excess} мл ({excess_glasses} {word}) больше нормы! 💦"
 
 
-def get_water_display(current: int, goal: int = DEFAULT_WATER_GOAL) -> str:
+def get_water_display(current: int, goal: int) -> str:
     """
     Возвращает строку для отображения воды в дневнике.
     """
     emoji = get_water_emoji(current, goal)
-    return f"{emoji} {current} / {goal}"
+    return f"{emoji} {current} / {goal} мл"

@@ -11,9 +11,6 @@ CALLBACK_BACK_TO_DIARY = "water_back_to_diary"
 DEFAULT_WATER_ML = 250
 WATER_VOLUMES = [250, 300, 500, 1000]
 
-# Цель по воде (стаканов)
-DEFAULT_WATER_GOAL = 8
-
 # Эмодзи для разных состояний
 EMOJI_WATER = "💧"
 EMOJI_WATER_FULL = "💙"
