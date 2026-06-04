@@ -6,3 +6,4 @@ Pillow>=10.4.0
 pyzbar==0.1.9
 python-Levenshtein>=0.26.0
 pymorphy2==0.9.1
+cachetools>=5.0.0
