@@ -77,13 +77,20 @@ class AddFoodHandlers:
         }
 
     def _clear_search_context(self, context: ContextTypes.DEFAULT_TYPE):
-        """Очищает временные данные поиска."""
+        """Очищает временные данные поиска, НО сохраняет метод поиска."""
+        # 🎯 Сохраняем метод поиска перед очисткой
+        saved_method = context.user_data.get("search_method")
+
         for key in [
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
             "last_added_food", "food_search_query",
         ]:
             context.user_data.pop(key, None)
+
+        # 🎯 Восстанавливаем метод поиска (чтобы "Новый поиск" помнил контекст)
+        if saved_method:
+            context.user_data["search_method"] = saved_method
 
     def _format_products_text(self, products: List[Dict[str, Any]], start_idx: int = 0) -> str:
         """
@@ -119,7 +126,13 @@ class AddFoodHandlers:
         if query:
             await query.answer()
 
-        self._clear_search_context(context)
+        # 🎯 Полный сброс контекста (включая метод поиска)
+        for key in [
+            "search_results", "search_page", "selected_product",
+            "calculated_food", "meal_type", "food_weight",
+            "last_added_food", "food_search_query", "search_method",
+        ]:
+            context.user_data.pop(key, None)
 
         text = (
             "🍽️ <b>Добавление еды</b>\n\n"
@@ -169,6 +182,9 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
 
+        # 🎯 Запоминаем метод поиска
+        context.user_data["search_method"] = "popular"
+
         context.user_data["search_results"] = POPULAR_FOODS
         context.user_data["search_page"] = 0
         context.user_data["food_search_query"] = "Популярные блюда"
@@ -206,6 +222,9 @@ class AddFoodHandlers:
         query = update.callback_query
         if query:
             await query.answer()
+
+        # 🎯 Запоминаем метод поиска
+        context.user_data["search_method"] = "text"
 
         prev_query = context.user_data.get("food_search_query", "")
         hint = f'\n\n💡 <i>Прошлый запрос: «{prev_query}»</i>' if prev_query else ""
@@ -774,11 +793,6 @@ class AddFoodHandlers:
     ) -> Optional[str]:
         """
         Улучшенное распознавание штрихкода с preprocessing.
-        - Нормализация (RGB)
-        - Grayscale + контраст
-        - Sharpening
-        - Повороты на 90/180/270°
-        - Валидация формата (EAN-8/12/13/14)
         """
         try:
             photo = update.message.photo[-1]
@@ -878,6 +892,9 @@ class AddFoodHandlers:
         """Показывает избранное с пагинацией."""
         query = update.callback_query
         await query.answer()
+
+        # 🎯 Запоминаем метод поиска
+        context.user_data["search_method"] = "favorites"
 
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
@@ -991,6 +1008,9 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
 
+        # 🎯 Запоминаем метод поиска
+        context.user_data["search_method"] = "voice"
+
         text = (
             "🎤 <b>Голосовой ввод</b>\n\n"
             "Просто нажми на 🎤 внизу и скажи, что ты съел.\n\n"
@@ -1089,24 +1109,39 @@ class AddFoodHandlers:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
         """
-        Магия Apple: начинает новый поиск, сохраняя прошлый запрос как подсказку.
+        🎯 Магия Apple: начинает новый поиск ТЕМ ЖЕ МЕТОДОМ,
+        что использовался изначально.
         """
         query = update.callback_query
         if query:
             await query.answer("🔍 Новый поиск")
 
+        # Получаем метод, которым искал пользователь
+        search_method = context.user_data.get("search_method", "text")
+
+        # Сохраняем прошлый запрос для подсказки
         prev_query = context.user_data.get("food_search_query", "")
 
+        # Очищаем результаты поиска, НО НЕ метод
         for key in [
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
         ]:
             context.user_data.pop(key, None)
 
-        if prev_query:
+        # Восстанавливаем прошлый запрос как подсказку
+        if prev_query and search_method in ("text", "voice"):
             context.user_data["food_search_query"] = prev_query
 
-        return await self._start_text_input(update, context)
+        # 🎯 Перенаправляем на соответствующий метод
+        if search_method == "voice":
+            return await self._start_voice_input(update, context)
+        elif search_method == "favorites":
+            return await self._show_favorites(update, context)
+        elif search_method == "popular":
+            return await self._show_popular_foods(update, context)
+        else:  # "text" или по умолчанию
+            return await self._start_text_input(update, context)
 
     async def _back_to_results(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1164,7 +1199,13 @@ class AddFoodHandlers:
         if query:
             await query.answer()
 
-        self._clear_search_context(context)
+        # 🎯 Полный сброс контекста
+        for key in [
+            "search_results", "search_page", "selected_product",
+            "calculated_food", "meal_type", "food_weight",
+            "last_added_food", "food_search_query", "search_method",
+        ]:
+            context.user_data.pop(key, None)
 
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
