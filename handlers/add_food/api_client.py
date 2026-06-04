@@ -11,23 +11,12 @@ logger = logging.getLogger(__name__)
 class OpenFoodFactsClient:
     """
     Клиент для работы с Open Food Facts API.
-    
-    Порядок запросов:
-    1. Search-a-licious (новая поисковая система на Elasticsearch)
-    2. API V2 (стабильный, с поддержкой нечёткого поиска)
-    3. API V1 (устаревший, только точное совпадение)
+    Надёжный выбор: Search-a-licious → API V2 → API V1.
     """
 
-    # Search-a-licious
     SEARCH_URL_SAL = "https://search.openfoodfacts.org/search"
-    
-    # API V2
     SEARCH_URL_V2 = "https://world.openfoodfacts.org/api/v2/search"
-    
-    # API V1
     SEARCH_URL_V1 = "https://world.openfoodfacts.org/cgi/search.pl"
-    
-    # Эндпоинт для штрихкодов
     PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product"
 
     def __init__(self):
@@ -46,15 +35,14 @@ class OpenFoodFactsClient:
         retries: int = 2
     ) -> List[Dict[str, Any]]:
         """
-        Основной метод поиска.
-        Приоритет: Search-a-licious → API V2 → API V1.
+        Основной метод поиска с приоритетом: Search-a-licious → API V2 → API V1.
         """
         cache_key = f"{query}:{page}:{page_size}"
         if cache_key in self._cache:
             logger.debug(f"Cache hit: {query}")
             return self._cache[cache_key]
 
-        # 1. Search-a-licious
+        # 1. Пробуем Search-a-licious (экспериментальный, но самый современный)
         for attempt in range(retries + 1):
             try:
                 products = await self._search_sal(query, page, page_size)
@@ -67,7 +55,7 @@ class OpenFoodFactsClient:
                 if attempt < retries:
                     await asyncio.sleep(0.5 * (attempt + 1))
 
-        # 2. API V2
+        # 2. Пробуем API V2 (стабильный, современный)
         try:
             products = await self._search_v2(query, page, page_size)
             if products:
@@ -77,7 +65,7 @@ class OpenFoodFactsClient:
         except Exception as e:
             logger.warning(f"API V2 failed: {e}")
 
-        # 3. API V1 (резерв)
+        # 3. Резервный API V1 (устаревший, но надёжный)
         try:
             products = await self._search_v1(query, page, page_size)
             if products:
@@ -91,7 +79,7 @@ class OpenFoodFactsClient:
 
     async def _search_sal(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
-        Search-a-licious — новая поисковая система на Elasticsearch.
+        Поиск через Search-a-licious с улучшенной обработкой ответов.
         """
         params = {
             "q": query,
@@ -102,28 +90,19 @@ class OpenFoodFactsClient:
         response = await self.client.get(self.SEARCH_URL_SAL, params=params)
         response.raise_for_status()
         data = response.json()
-
         products = []
-        
-        # Search-a-licious может возвращать разные форматы:
-        # 1. Прямой список продуктов
-        # 2. Объект с полем "products"
-        # 3. Объект с полем "hits" (Elasticsearch format)
-        
+
         if isinstance(data, list):
-            # Прямой список продуктов
             for product in data:
                 parsed = self._parse_product(product)
                 if parsed and parsed.get("kcal_100g"):
                     products.append(parsed)
         elif isinstance(data, dict):
-            # Объект с полем "products"
             if "products" in data:
                 for product in data.get("products", []):
                     parsed = self._parse_product(product)
                     if parsed and parsed.get("kcal_100g"):
                         products.append(parsed)
-            # Elasticsearch формат с "hits"
             elif "hits" in data:
                 for hit in data.get("hits", {}).get("hits", []):
                     product = hit.get("_source", {})
@@ -135,7 +114,7 @@ class OpenFoodFactsClient:
 
     async def _search_v2(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
-        API V2 с оператором like для нечёткого поиска.
+        Поиск через API V2 с оператором like для нечёткого поиска.
         """
         params = {
             "search_terms": query,
@@ -152,7 +131,7 @@ class OpenFoodFactsClient:
 
     async def _search_v1(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
-        API V1 (устаревший).
+        Поиск через устаревший API V1.
         """
         params = {
             "search_terms": query,
