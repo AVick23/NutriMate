@@ -18,8 +18,8 @@ class OpenFoodFactsClient:
     3. API V1 (устаревший, только точное совпадение)
     """
 
-    # Search-a-licious (экспериментальная Elasticsearch поисковая система)
-    SEARCH_URL_SAL = "https://search.openfoodfacts.org/api/v1/search"
+    # Search-a-licious — правильный URL (без /api/v1/)
+    SEARCH_URL_SAL = "https://search.openfoodfacts.org/search"
     
     # API V2 (стабильный, современный)
     SEARCH_URL_V2 = "https://world.openfoodfacts.org/api/v2/search"
@@ -27,7 +27,7 @@ class OpenFoodFactsClient:
     # API V1 (устаревший, резервный)
     SEARCH_URL_V1 = "https://world.openfoodfacts.org/cgi/search.pl"
     
-    # Эндпоинт для штрихкодов (стабильный)
+    # Эндпоинт для штрихкодов
     PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product"
 
     def __init__(self):
@@ -54,7 +54,7 @@ class OpenFoodFactsClient:
             logger.debug(f"Cache hit: {query}")
             return self._cache[cache_key]
 
-        # 1. Search-a-licious (самый современный, Elasticsearch)
+        # 1. Search-a-licious (самый современный)
         for attempt in range(retries + 1):
             try:
                 products = await self._search_sal(query, page, page_size)
@@ -67,7 +67,7 @@ class OpenFoodFactsClient:
                 if attempt < retries:
                     await asyncio.sleep(0.5 * (attempt + 1))
 
-        # 2. API V2 (стабильный, с нечётким поиском)
+        # 2. API V2
         try:
             products = await self._search_v2(query, page, page_size)
             if products:
@@ -77,7 +77,7 @@ class OpenFoodFactsClient:
         except Exception as e:
             logger.warning(f"API V2 failed: {e}")
 
-        # 3. API V1 (устаревший, резервный)
+        # 3. API V1 (резерв)
         try:
             products = await self._search_v1(query, page, page_size)
             if products:
@@ -92,7 +92,7 @@ class OpenFoodFactsClient:
     async def _search_sal(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
         Search-a-licious — новая поисковая система на Elasticsearch.
-        Поддерживает нечёткий поиск "из коробки".
+        Правильный URL: https://search.openfoodfacts.org/search
         """
         params = {
             "q": query,
@@ -105,6 +105,7 @@ class OpenFoodFactsClient:
         data = response.json()
 
         products = []
+        
         # Search-a-licious возвращает продукты в поле "hits"
         if "hits" in data:
             for hit in data.get("hits", {}).get("hits", []):
@@ -139,7 +140,7 @@ class OpenFoodFactsClient:
 
     async def _search_v1(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
-        API V1 (устаревший, только точное совпадение).
+        API V1 (устаревший).
         """
         params = {
             "search_terms": query,
@@ -159,7 +160,6 @@ class OpenFoodFactsClient:
     async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
         """
         Получение продукта по штрихкоду.
-        Использует стабильный API V2.
         """
         try:
             response = await self.client.get(f"{self.PRODUCT_URL}/{barcode}.json")
