@@ -1,8 +1,14 @@
-# db/database.py
+"""
+Модуль работы с базой данных SQLite через aiosqlite.
+"""
 import aiosqlite
+import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 import os
+
+logger = logging.getLogger(__name__)
+
 
 class Database:
     def __init__(self, db_path: str):
@@ -35,8 +41,113 @@ class Database:
                 await conn.rollback()
                 raise
 
+    async def _check_favorites_needs_migration(self, conn: aiosqlite.Connection) -> bool:
+        """
+        Проверяет, нужна ли миграция таблицы favorites.
+        Возвращает True, если таблица существует со старой схемой
+        (UNIQUE по user_id, food_name, amount_g).
+        """
+        # Проверяем существование таблицы
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='favorites'"
+        )
+        if not await cursor.fetchone():
+            return False  # таблицы нет — просто создадим новую
+
+        # Проверяем индексы таблицы
+        cursor = await conn.execute("PRAGMA index_list(favorites)")
+        indexes = await cursor.fetchall()
+
+        for idx in indexes:
+            if not idx["unique"]:
+                continue
+            idx_name = idx["name"]
+            # Получаем колонки этого индекса
+            cursor = await conn.execute(f"PRAGMA index_info({idx_name})")
+            idx_cols = await cursor.fetchall()
+            col_names = [c["name"] for c in idx_cols]
+
+            # Старая схема: amount_g в UNIQUE, barcode — нет
+            if "amount_g" in col_names and "barcode" not in col_names:
+                return True
+
+        return False
+
+    async def _migrate_favorites(self, conn: aiosqlite.Connection) -> None:
+        """
+        Мигрирует таблицу favorites со старой схемы на новую.
+        Объединяет дубликаты (user_id, food_name) — суммирует times_used.
+        """
+        logger.info("🔄 Начинаю миграцию таблицы favorites...")
+
+        # 1. Создаём новую таблицу с правильной схемой
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS favorites_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                food_name TEXT NOT NULL,
+                amount_g REAL NOT NULL,
+                kcal INTEGER NOT NULL,
+                protein_g REAL NOT NULL,
+                fat_g REAL NOT NULL,
+                carbs_g REAL NOT NULL,
+                barcode TEXT,
+                times_used INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, food_name, barcode)
+            )
+        """)
+
+        # 2. Переносим данные, объединяя дубликаты
+        # Для каждого (user_id, food_name, barcode):
+        # - times_used = SUM
+        # - amount_g, kcal, ... = MAX (последнее использованное значение)
+        # - created_at = MIN (самая старая запись)
+        # - updated_at = MAX (самая новая)
+        await conn.execute("""
+            INSERT INTO favorites_new 
+            (user_id, food_name, amount_g, kcal, protein_g, fat_g, carbs_g, 
+             barcode, times_used, created_at, updated_at)
+            SELECT 
+                user_id, 
+                food_name, 
+                MAX(amount_g) as amount_g,
+                MAX(kcal) as kcal,
+                MAX(protein_g) as protein_g,
+                MAX(fat_g) as fat_g,
+                MAX(carbs_g) as carbs_g,
+                barcode,
+                SUM(times_used) as times_used,
+                MIN(created_at) as created_at,
+                MAX(updated_at) as updated_at
+            FROM favorites
+            GROUP BY user_id, food_name, barcode
+        """)
+
+        # 3. Считаем, сколько было дубликатов
+        cursor = await conn.execute("SELECT COUNT(*) as cnt FROM favorites")
+        old_count = (await cursor.fetchone())["cnt"]
+
+        cursor = await conn.execute("SELECT COUNT(*) as cnt FROM favorites_new")
+        new_count = (await cursor.fetchone())["cnt"]
+
+        # 4. Удаляем старую таблицу
+        await conn.execute("DROP TABLE favorites")
+
+        # 5. Переименовываем новую
+        await conn.execute("ALTER TABLE favorites_new RENAME TO favorites")
+
+        duplicates_merged = old_count - new_count
+        logger.info(
+            f"✅ Миграция favorites завершена: "
+            f"было {old_count} записей, стало {new_count} "
+            f"(объединено дубликатов: {duplicates_merged})"
+        )
+
     async def init_tables(self) -> None:
-        """Создаёт таблицы, если их нет."""
+        """Создаёт таблицы, если их нет. Включает миграцию favorites."""
         async with self.connection() as conn:
             # Таблица users
             await conn.execute("""
@@ -73,7 +184,7 @@ class Database:
                 )
             """)
 
-            # Таблица registration_state (временные данные регистрации)
+            # Таблица registration_state
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS registration_state (
                     telegram_id INTEGER PRIMARY KEY,
@@ -84,9 +195,30 @@ class Database:
                 )
             """)
 
-            await conn.commit()
-            
-            # db/database.py — добавить в init_tables()
+            # 🎯 Проверяем, нужна ли миграция favorites
+            needs_migration = await self._check_favorites_needs_migration(conn)
+            if needs_migration:
+                await self._migrate_favorites(conn)
+            else:
+                # Таблицы нет или она уже с новой схемой — просто создаём
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS favorites (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        food_name TEXT NOT NULL,
+                        amount_g REAL NOT NULL,
+                        kcal INTEGER NOT NULL,
+                        protein_g REAL NOT NULL,
+                        fat_g REAL NOT NULL,
+                        carbs_g REAL NOT NULL,
+                        barcode TEXT,
+                        times_used INTEGER DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        UNIQUE(user_id, food_name, barcode)
+                    )
+                """)
 
             # Таблица meals
             await conn.execute("""
@@ -106,28 +238,9 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 )
             """)
-
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_meals_user_date ON meals(user_id, DATE(eaten_at))")
-
-            # Таблица favorites
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS favorites (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    food_name TEXT NOT NULL,
-                    amount_g REAL NOT NULL,
-                    kcal INTEGER NOT NULL,
-                    protein_g REAL NOT NULL,
-                    fat_g REAL NOT NULL,
-                    carbs_g REAL NOT NULL,
-                    barcode TEXT,
-                    times_used INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                    UNIQUE(user_id, food_name, amount_g)
-                )
-            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_meals_user_date ON meals(user_id, DATE(eaten_at))"
+            )
 
             # Таблица water_logs
             await conn.execute("""
@@ -139,5 +252,9 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 )
             """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_water_user_date ON water_logs(user_id, DATE(logged_at))"
+            )
 
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_water_user_date ON water_logs(user_id, DATE(logged_at))")
+            await conn.commit()
+            logger.info("✅ Таблицы БД готовы")

@@ -205,17 +205,21 @@ def get_favorites_keyboard(
         ])
     else:
         for i, fav in enumerate(page_favs):
-            real_index = start_idx + i
+            # 🎯 ВАЖНО: используем fav["id"], а не real_index
+            fav_id = fav["id"]
             name = fav["food_name"][:28]
             kcal = fav.get("kcal", 0)
             weight = fav.get("amount_g", 0)
+            times_used = fav.get("times_used", 1)
+            
             buttons.append([
                 InlineKeyboardButton(
-                    f"⭐ {name} · {weight}г · {kcal}ккал",
-                    callback_data=f"{CALLBACK_FAVORITE_PREFIX}{real_index}"
+                    f"⭐ {name} · {weight:.0f}г · {kcal}ккал (×{times_used})",
+                    callback_data=f"{CALLBACK_FAVORITE_PREFIX}{fav_id}"  # 🎯 ID, не индекс
                 )
             ])
 
+        # Пагинация
         if total_pages > 1:
             nav_row = []
             if page > 0:

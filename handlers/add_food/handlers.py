@@ -926,7 +926,18 @@ class AddFoodHandlers:
     async def select_favorite(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает выбор из избранного."""
+        """
+        🎯 Обрабатывает выбор из избранного.
+        
+        Новая логика:
+        1. Берём сохранённое блюдо
+        2. Пересчитываем КБЖУ на 100г (для работы стандартного механизма)
+        3. Сохраняем последний использованный вес как default_weight
+        4. Переходим к выбору веса (а не сразу к типу приёма пищи)
+        
+        Результат: пользователь видит "⚖️ Сколько грамм?" с подсказкой
+        "💡 Обычно: ~350г" и может выбрать свой вес или подтвердить.
+        """
         query = update.callback_query
         await query.answer("✓ Выбрано")
 
@@ -945,29 +956,45 @@ class AddFoodHandlers:
             return STATE_SELECT_FAVORITE
 
         try:
-            index = int(data.replace(CALLBACK_FAVORITE_PREFIX, ""))
+            # 🎯 Теперь это ID блюда в БД, а не индекс в списке
+            fav_id = int(data.replace(CALLBACK_FAVORITE_PREFIX, ""))
         except ValueError:
             return STATE_SELECT_FAVORITE
 
+        # Ищем блюдо по ID в списке
         favorites = context.user_data.get("favorites_list", [])
-        if index >= len(favorites):
-            return STATE_SELECT_FAVORITE
+        fav = next((f for f in favorites if f["id"] == fav_id), None)
 
-        fav = favorites[index]
-        calculated = {
+        if not fav:
+            await query.answer("❌ Блюдо не найдено", show_alert=True)
+            return await self._show_favorites(update, context)
+
+        # Увеличиваем счётчик использования
+        await self.favorites_repo.increment_usage(fav_id)
+
+        # 🎯 Пересчитываем КБЖУ на 100г из сохранённых данных порции
+        amount = fav["amount_g"] or 100
+        multiplier = 100 / amount if amount > 0 else 1
+
+        # Формируем selected_product в формате api_client (для работы calculate_for_weight)
+        selected_product = {
+            "code": fav.get("barcode"),
             "name": fav["food_name"],
-            "weight": fav["amount_g"],
-            "kcal": fav["kcal"],
-            "protein": fav["protein_g"],
-            "fat": fav["fat_g"],
-            "carbs": fav["carbs_g"],
+            "brand": "",
+            "quantity": None,
+            "default_weight": amount,  # 🎯 Последний использованный вес как дефолтный
+            "kcal_100g": fav["kcal"] * multiplier,
+            "protein_100g": fav["protein_g"] * multiplier,
+            "fat_100g": fav["fat_g"] * multiplier,
+            "carbs_100g": fav["carbs_g"] * multiplier,
+            "image_url": None,
         }
 
-        context.user_data["calculated_food"] = calculated
-        context.user_data["selected_product"] = {"name": fav["food_name"]}
-        await self.favorites_repo.increment_usage(fav["id"])
+        context.user_data["selected_product"] = selected_product
+        # НЕ сохраняем calculated_food — чтобы бот спросил вес
 
-        return await self._ask_meal_type(update, context)
+        # 🎯 Переходим к выбору веса (вместо типа приёма пищи)
+        return await self._ask_weight(update, context)
 
     async def _paginate_favorites(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str

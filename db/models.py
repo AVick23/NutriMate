@@ -1,7 +1,12 @@
-# db/models.py
+"""
+Репозитории для работы с БД.
+"""
 from typing import Optional, Dict, Any, List
 from db.database import Database
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository:
@@ -28,8 +33,13 @@ class UserRepository:
             row = await cursor.fetchone()
             return row["id"] if row else None
 
-    async def create(self, telegram_id: int, username: Optional[str] = None,
-                     first_name: Optional[str] = None, last_name: Optional[str] = None) -> int:
+    async def create(
+        self,
+        telegram_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None
+    ) -> int:
         """Создаёт пользователя и возвращает его id."""
         async with self.db.transaction() as conn:
             cursor = await conn.execute(
@@ -91,7 +101,7 @@ class RegistrationStateRepository:
                 (telegram_id, state, json.dumps(data))
             )
 
-    async def get(self, telegram_id: int) -> Optional[tuple[str, Dict[str, Any]]]:
+    async def get(self, telegram_id: int) -> Optional[tuple]:
         """Получает состояние и данные регистрации."""
         async with self.db.connection() as conn:
             cursor = await conn.execute(
@@ -143,8 +153,11 @@ class FavoritesRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    async def get_favorites(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """Получает список избранных продуктов."""
+    async def get_favorites(self, user_id: int, limit: int = 200) -> List[Dict[str, Any]]:
+        """
+        Получает список избранных продуктов.
+        Лимит увеличен до 200 (было 10).
+        """
         async with self.db.connection() as conn:
             cursor = await conn.execute(
                 """SELECT * FROM favorites 
@@ -155,6 +168,23 @@ class FavoritesRepository:
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def get_favorite_by_id(
+        self,
+        user_id: int,
+        favorite_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Получает одно избранное блюдо по ID.
+        Проверяет, что блюдо принадлежит указанному пользователю.
+        """
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM favorites WHERE id = ? AND user_id = ?",
+                (favorite_id, user_id)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
     async def add_favorite(
         self,
@@ -167,17 +197,57 @@ class FavoritesRepository:
         carbs_g: float,
         barcode: Optional[str] = None
     ) -> None:
-        """Добавляет или обновляет избранный продукт."""
+        """
+        Добавляет или обновляет избранный продукт.
+        
+        🎯 Уникальность по (user_id, food_name, barcode) — НЕ по весу.
+        
+        При повторном сохранении:
+        - Обновляет amount_g (последний использованный вес)
+        - Обновляет КБЖУ
+        - Увеличивает times_used
+        - Обновляет updated_at
+        """
         async with self.db.transaction() as conn:
             await conn.execute(
                 """INSERT INTO favorites 
                    (user_id, food_name, amount_g, kcal, protein_g, fat_g, carbs_g, barcode)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(user_id, food_name, amount_g) DO UPDATE SET
+                   ON CONFLICT(user_id, food_name, barcode) DO UPDATE SET
+                   amount_g = excluded.amount_g,
+                   kcal = excluded.kcal,
+                   protein_g = excluded.protein_g,
+                   fat_g = excluded.fat_g,
+                   carbs_g = excluded.carbs_g,
                    times_used = times_used + 1,
                    updated_at = CURRENT_TIMESTAMP""",
                 (user_id, food_name, amount_g, kcal, protein_g, fat_g, carbs_g, barcode)
             )
+
+    async def delete_favorite(self, user_id: int, favorite_id: int) -> bool:
+        """
+        Удаляет блюдо из избранного.
+        Проверяет, что блюдо принадлежит пользователю.
+        Возвращает True, если удалено.
+        """
+        async with self.db.transaction() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM favorites WHERE id = ? AND user_id = ?",
+                (favorite_id, user_id)
+            )
+            return cursor.rowcount > 0
+
+    async def clear_all(self, user_id: int) -> int:
+        """
+        Удаляет всё избранное пользователя.
+        Возвращает количество удалённых записей.
+        """
+        async with self.db.transaction() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM favorites WHERE user_id = ?",
+                (user_id,)
+            )
+            return cursor.rowcount
 
     async def increment_usage(self, favorite_id: int) -> None:
         """Увеличивает счётчик использования."""
@@ -228,9 +298,9 @@ class DailyStatsRepository:
                 "water_ml": water_stats["water_ml"] or 0,
             }
 
+
 class WaterRepository:
     """Репозиторий для работы с водой."""
-    
     def __init__(self, db: Database):
         self.db = db
 
@@ -247,7 +317,7 @@ class WaterRepository:
         """Возвращает количество выпитых стаканов за сегодня (250 мл = 1 стакан)."""
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
-        
+
         async with self.db.connection() as conn:
             cursor = await conn.execute(
                 """SELECT COALESCE(SUM(amount_ml), 0) as total_ml
@@ -257,20 +327,20 @@ class WaterRepository:
             )
             row = await cursor.fetchone()
             total_ml = row["total_ml"] if row else 0
-            return int(total_ml / 250)  # переводим в стаканы
+            return int(total_ml / 250)
 
 
 class HistoryRepository:
     """Репозиторий для работы с историей записей (еда и вода)."""
-    
     def __init__(self, db: Database):
         self.db = db
 
-    async def get_meals_for_date(self, user_id: int, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Получает все приёмы пищи за указанную дату.
-        date_str в формате 'YYYY-MM-DD'
-        """
+    async def get_meals_for_date(
+        self,
+        user_id: int,
+        date_str: str
+    ) -> List[Dict[str, Any]]:
+        """Получает все приёмы пищи за указанную дату."""
         async with self.db.connection() as conn:
             cursor = await conn.execute(
                 """SELECT id, meal_type, food_name, amount_g, kcal, 
@@ -283,11 +353,12 @@ class HistoryRepository:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def get_water_for_date(self, user_id: int, date_str: str) -> List[Dict[str, Any]]:
-        """
-        Получает все записи о воде за указанную дату.
-        date_str в формате 'YYYY-MM-DD'
-        """
+    async def get_water_for_date(
+        self,
+        user_id: int,
+        date_str: str
+    ) -> List[Dict[str, Any]]:
+        """Получает все записи о воде за указанную дату."""
         async with self.db.connection() as conn:
             cursor = await conn.execute(
                 """SELECT id, amount_ml, logged_at
@@ -299,13 +370,13 @@ class HistoryRepository:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def get_dates_with_entries(self, user_id: int, limit: int = 30) -> List[str]:
-        """
-        Возвращает список дат (YYYY-MM-DD), за которые есть записи (еда или вода).
-        Ограничено последними `limit` днями.
-        """
+    async def get_dates_with_entries(
+        self,
+        user_id: int,
+        limit: int = 30
+    ) -> List[str]:
+        """Возвращает список дат (YYYY-MM-DD), за которые есть записи."""
         async with self.db.connection() as conn:
-            # Получаем даты из meals
             cursor = await conn.execute(
                 """SELECT DISTINCT DATE(eaten_at) as date
                    FROM meals 
@@ -315,8 +386,7 @@ class HistoryRepository:
                 (user_id, limit)
             )
             meal_dates = await cursor.fetchall()
-            
-            # Получаем даты из water_logs
+
             cursor = await conn.execute(
                 """SELECT DISTINCT DATE(logged_at) as date
                    FROM water_logs 
@@ -326,13 +396,11 @@ class HistoryRepository:
                 (user_id, limit)
             )
             water_dates = await cursor.fetchall()
-            
-            # Объединяем и убираем дубликаты
+
             dates = set()
             for row in meal_dates:
                 dates.add(row["date"])
             for row in water_dates:
                 dates.add(row["date"])
-            
-            # Сортируем от новых к старым
+
             return sorted(list(dates), reverse=True)
