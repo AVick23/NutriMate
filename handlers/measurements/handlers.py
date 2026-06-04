@@ -23,7 +23,7 @@ from .keyboards import (
 )
 from .utils import (
     get_smart_feedback, format_history_message, format_main_menu_message,
-    get_quick_values_for_type, get_measurement_type_info
+    get_measurement_type_info, calculate_trend
 )
 
 logger = logging.getLogger(__name__)
@@ -124,10 +124,9 @@ class MeasurementsHandlers:
 
     async def handle_value_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Обрабатывает ввод значения (через кнопки или текст)."""
-        query = update.callback_query
-        user = update.effective_user
-        
-        if query:
+        # Проверяем, это callback или обычное сообщение
+        if update.callback_query:
+            query = update.callback_query
             await query.answer()
             data = query.data
             
@@ -145,7 +144,7 @@ class MeasurementsHandlers:
                     await query.answer("❌ Ошибка", show_alert=True)
                     return STATE_ENTER_VALUE
                 
-                return await self._save_measurement(update, context, value)
+                return await self._save_measurement(update, context, value, is_callback=True)
             
             if data == CALLBACK_VALUE_CUSTOM:
                 await query.edit_message_text(
@@ -155,7 +154,7 @@ class MeasurementsHandlers:
                 )
                 return STATE_ENTER_VALUE
         
-        # Обработка текстового ввода
+        # Обработка текстового ввода (своё значение)
         elif update.message:
             text = update.message.text.strip()
             try:
@@ -168,11 +167,11 @@ class MeasurementsHandlers:
                 )
                 return STATE_ENTER_VALUE
             
-            return await self._save_measurement(update, context, value)
+            return await self._save_measurement(update, context, value, is_callback=False)
         
         return STATE_ENTER_VALUE
 
-    async def _save_measurement(self, update: Update, context: ContextTypes.DEFAULT_TYPE, value: float) -> int:
+    async def _save_measurement(self, update: Update, context: ContextTypes.DEFAULT_TYPE, value: float, is_callback: bool = True) -> int:
         """Сохраняет замер в БД и показывает фидбек."""
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
@@ -192,7 +191,6 @@ class MeasurementsHandlers:
         history = await self.measurements_repo.get_measurements_history(user_id, type_id, limit=10)
         
         # Рассчитываем тренд
-        from .utils import calculate_trend
         trend = calculate_trend(history)
         
         # Генерируем умное сообщение
@@ -205,8 +203,9 @@ class MeasurementsHandlers:
             trend
         )
         
-        if isinstance(update.callback_query, Update) or hasattr(update, 'callback_query'):
-            query = update.callback_query if hasattr(update, 'callback_query') else update
+        # Отправляем сообщение в зависимости от типа ввода
+        if is_callback and update.callback_query:
+            query = update.callback_query
             await query.edit_message_text(
                 f"{feedback}\n\nЧто дальше?",
                 reply_markup=get_add_more_keyboard(),
@@ -297,8 +296,8 @@ class MeasurementsHandlers:
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Отмена и возврат в главное меню."""
-        query = update.callback_query
-        if query:
+        if update.callback_query:
+            query = update.callback_query
             await query.answer()
         await self._back_to_diary(update, context)
         return ConversationHandler.END
