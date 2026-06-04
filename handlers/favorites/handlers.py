@@ -1,7 +1,5 @@
 """
 Обработчики для управления избранными блюдами.
-Отдельный ConversationHandler с полным циклом:
-просмотр → выбор → вес → meal_type → сохранение / удаление / очистка.
 """
 import logging
 from telegram import Update
@@ -17,6 +15,7 @@ from db.models import (
 )
 from .constants import (
     STATE_MAIN_MENU, STATE_ENTER_WEIGHT, STATE_SELECT_MEAL_TYPE,
+    STATE_CONFIRM_ADD, STATE_AFTER_ADD,
     STATE_CONFIRM_DELETE, STATE_CONFIRM_CLEAR,
     CALLBACK_FAVORITES_SHOW, CALLBACK_FAVORITES_MENU,
     CALLBACK_FAVORITE_SELECT, CALLBACK_FAVORITE_DELETE,
@@ -25,13 +24,16 @@ from .constants import (
     CALLBACK_BACK_TO_DIARY,
     CALLBACK_PAGE_PREV, CALLBACK_PAGE_NEXT,
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
-    CALLBACK_FAVORITE_CANCEL,
     CALLBACK_MEAL_PREFIX,
+    CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
+    CALLBACK_ADD_ANOTHER, CALLBACK_SEARCH_AGAIN,
+    CALLBACK_FAVORITE_CANCEL,
     MEAL_TYPES, PAGE_SIZE,
 )
 from .keyboards import (
     get_favorites_list_keyboard,
     get_weight_keyboard, get_meal_type_keyboard,
+    get_confirm_keyboard, get_after_add_keyboard,
     get_confirm_delete_keyboard, get_confirm_clear_keyboard,
 )
 
@@ -52,7 +54,7 @@ class FavoritesHandlers:
     # ================================================================
 
     def _clear_context(self, context: ContextTypes.DEFAULT_TYPE):
-        """Очищает временные данные модуля избранного."""
+        """Очищает временные данные."""
         for key in [
             "favorites_list", "favorites_page",
             "fav_selected", "fav_weight", "fav_meal_type",
@@ -60,7 +62,7 @@ class FavoritesHandlers:
             context.user_data.pop(key, None)
 
     def _format_menu_text(self, favorites: list) -> str:
-        """Форматирует текст главного меню избранного со статистикой."""
+        """Форматирует текст главного меню."""
         if not favorites:
             return (
                 "⭐ <b>Твоё избранное</b>\n\n"
@@ -95,7 +97,7 @@ class FavoritesHandlers:
         if query:
             await query.answer()
 
-        # Очищаем временные данные (кроме списка)
+        # Очищаем временные данные (но не список)
         context.user_data.pop("fav_selected", None)
         context.user_data.pop("fav_weight", None)
         context.user_data.pop("fav_meal_type", None)
@@ -119,13 +121,13 @@ class FavoritesHandlers:
         return STATE_MAIN_MENU
 
     # ================================================================
-    # ВЫБОР БЛЮДА → ВЕС → ТИП ПРИЁМА → СОХРАНЕНИЕ
+    # ВЫБОР БЛЮДА → ВЕС → ТИП → ПОДТВЕРЖДЕНИЕ → СОХРАНЕНИЕ
     # ================================================================
 
     async def select_favorite(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Выбирает блюдо из избранного и переходит к выбору веса."""
+        """Выбирает блюдо и переходит к выбору веса."""
         query = update.callback_query
         await query.answer("✓ Выбрано")
 
@@ -144,10 +146,8 @@ class FavoritesHandlers:
         # Увеличиваем счётчик использований
         await self.favorites_repo.increment_usage(fav_id)
 
-        # Сохраняем выбранное блюдо в контекст
         context.user_data["fav_selected"] = fav
 
-        # Переходим к выбору веса
         return await self._ask_weight(update, context, fav)
 
     async def _ask_weight(
@@ -272,7 +272,6 @@ class FavoritesHandlers:
         fav = context.user_data.get("fav_selected", {})
         weight = context.user_data.get("fav_weight", 0)
 
-        # Пересчёт КБЖУ на выбранный вес
         original_weight = fav.get("amount_g", 100) or 100
         multiplier = weight / original_weight if original_weight > 0 else 1
 
@@ -294,28 +293,91 @@ class FavoritesHandlers:
     async def process_meal_type(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает выбор типа приёма пищи и сохраняет блюдо."""
+        """🎯 Обрабатывает выбор типа приёма пищи и переходит к ПОДТВЕРЖДЕНИЮ."""
         query = update.callback_query
         await query.answer()
 
         if query.data == CALLBACK_FAVORITES_MENU:
             return await self.show_favorites_menu(update, context)
 
+        # Кнопка "Изменить вес"
+        if query.data == CALLBACK_WEIGHT_CUSTOM:
+            fav = context.user_data.get("fav_selected", {})
+            return await self._ask_weight(update, context, fav)
+
         if not query.data.startswith(CALLBACK_MEAL_PREFIX):
             return STATE_SELECT_MEAL_TYPE
 
         meal_type = query.data.replace(CALLBACK_MEAL_PREFIX, "")
+        context.user_data["fav_meal_type"] = meal_type
+
         fav = context.user_data.get("fav_selected", {})
         weight = context.user_data.get("fav_weight", 0)
+        meal_label = MEAL_TYPES.get(meal_type, meal_type)
 
-        if not fav or weight <= 0:
-            await query.answer("❌ Ошибка данных", show_alert=True)
+        # Пересчёт КБЖУ
+        original_weight = fav.get("amount_g", 100) or 100
+        multiplier = weight / original_weight if original_weight > 0 else 1
+
+        kcal = round(fav.get("kcal", 0) * multiplier)
+        protein = round(fav.get("protein_g", 0) * multiplier, 1)
+        fat = round(fav.get("fat_g", 0) * multiplier, 1)
+        carbs = round(fav.get("carbs_g", 0) * multiplier, 1)
+
+        # 🎯 НОВОЕ: показываем экран ПОДТВЕРЖДЕНИЯ
+        text = (
+            f"✅ <b>Проверь данные</b>\n\n"
+            f"🍳 <b>{fav.get('food_name', '')}</b>\n"
+            f"⚖️ {weight:.0f}г\n"
+            f"🍽 {meal_label}\n\n"
+            f"🔥 {kcal} ккал · "
+            f"🍗 {protein}г · "
+            f"🥑 {fat}г · "
+            f"🍚 {carbs}г\n\n"
+            "Всё верно?"
+        )
+
+        await query.edit_message_text(
+            text,
+            reply_markup=get_confirm_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_CONFIRM_ADD
+
+    # ================================================================
+    # ПОДТВЕРЖДЕНИЕ И СОХРАНЕНИЕ (НОВОЕ)
+    # ================================================================
+
+    async def confirm_add(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """🎯 Подтверждает и сохраняет блюдо с красивым экраном успеха."""
+        query = update.callback_query
+        await query.answer("✓ Сохраняю...")
+
+        data = query.data
+
+        # Кнопка "Изменить вес"
+        if data == CALLBACK_CHANGE_WEIGHT:
+            fav = context.user_data.get("fav_selected", {})
+            return await self._ask_weight(update, context, fav)
+
+        # Кнопка "Отмена"
+        if data == CALLBACK_FAVORITES_MENU:
             return await self.show_favorites_menu(update, context)
 
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
 
-        # Пересчёт КБЖУ на выбранный вес
+        fav = context.user_data.get("fav_selected", {})
+        weight = context.user_data.get("fav_weight", 0)
+        meal_type = context.user_data.get("fav_meal_type", "snack")
+
+        if not fav or weight <= 0:
+            await query.answer("❌ Ошибка данных", show_alert=True)
+            return await self.show_favorites_menu(update, context)
+
+        # Пересчёт КБЖУ
         original_weight = fav.get("amount_g", 100) or 100
         multiplier = weight / original_weight if original_weight > 0 else 1
 
@@ -339,23 +401,68 @@ class FavoritesHandlers:
 
         meal_label = MEAL_TYPES.get(meal_type, meal_type)
 
-        # Очищаем временные данные
-        context.user_data.pop("fav_selected", None)
-        context.user_data.pop("fav_weight", None)
-
-        await query.edit_message_text(
-            f"✅ <b>Добавлено в {meal_label}!</b>\n\n"
+        # 🎯 Красивый экран успеха (магия Apple)
+        text = (
+            f"🎉 <b>Готово!</b>\n\n"
+            f"✅ Добавлено в <b>{meal_label}</b>\n\n"
             f"🍳 <b>{fav['food_name']}</b>\n"
             f"⚖️ {weight:.0f}г\n"
             f"🔥 {kcal} ккал · "
             f"🍗 {protein}г · "
             f"🥑 {fat}г · "
-            f"🍚 {carbs}г",
+            f"🍚 {carbs}г\n\n"
+            "Что хочешь сделать?"
+        )
+
+        await query.edit_message_text(
+            text,
+            reply_markup=get_after_add_keyboard(),
             parse_mode="HTML"
         )
 
-        # Возвращаемся в меню избранного (обновлённое)
-        return await self.show_favorites_menu(update, context)
+        return STATE_AFTER_ADD
+
+    # ================================================================
+    # СОСТОЯНИЕ ПОСЛЕ ДОБАВЛЕНИЯ (НОВОЕ)
+    # ================================================================
+
+    async def handle_after_add(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """🎯 Обрабатывает действия после успешного добавления."""
+        query = update.callback_query
+        await query.answer()
+
+        data = query.data
+
+        # Очистка временных данных
+        context.user_data.pop("fav_selected", None)
+        context.user_data.pop("fav_weight", None)
+        context.user_data.pop("fav_meal_type", None)
+
+        if data == CALLBACK_ADD_ANOTHER:
+            # Добавить ещё одно блюдо — выходим в add_food
+            from handlers.add_food.handlers import AddFoodHandlers
+            add_food_handler = AddFoodHandlers(self.db)
+            await add_food_handler.show_add_food_menu(update, context)
+            return ConversationHandler.END
+
+        if data == CALLBACK_SEARCH_AGAIN:
+            # Поискать что-то другое — тоже в add_food
+            from handlers.add_food.handlers import AddFoodHandlers
+            add_food_handler = AddFoodHandlers(self.db)
+            await add_food_handler.show_add_food_menu(update, context)
+            return ConversationHandler.END
+
+        if data == CALLBACK_FAVORITES_MENU:
+            # Вернуться к избранному
+            return await self.show_favorites_menu(update, context)
+
+        if data == CALLBACK_BACK_TO_DIARY:
+            # В дневник
+            return await self.back_to_diary(update, context)
+
+        return STATE_AFTER_ADD
 
     # ================================================================
     # УДАЛЕНИЕ БЛЮДА
@@ -417,7 +524,6 @@ class FavoritesHandlers:
         else:
             await query.answer("❌ Ошибка удаления", show_alert=True)
 
-        # Возвращаемся в обновлённое меню
         return await self.show_favorites_menu(update, context)
 
     # ================================================================
@@ -508,7 +614,7 @@ class FavoritesHandlers:
     async def cancel_action(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Отмена текущего действия (удаления/очистки)."""
+        """Отмена текущего действия."""
         query = update.callback_query
         if query:
             await query.answer("❌ Отменено")
@@ -543,33 +649,23 @@ def get_favorites_handler(db: Database) -> ConversationHandler:
                 h.show_favorites_menu,
                 pattern=f"^{CALLBACK_FAVORITES_SHOW}$"
             ),
+            # 🎯 НОВОЕ: entry point из add_food через "Избранное"
+            CallbackQueryHandler(
+                h.show_favorites_menu,
+                pattern=f"^favorites_show$"
+            ),
         ],
         states={
             STATE_MAIN_MENU: [
-                CallbackQueryHandler(
-                    h.select_favorite,
-                    pattern=f"^{CALLBACK_FAVORITE_SELECT}"
-                ),
-                CallbackQueryHandler(
-                    h.ask_delete_favorite,
-                    pattern=f"^{CALLBACK_FAVORITE_DELETE}"
-                ),
-                CallbackQueryHandler(
-                    h.ask_clear_all,
-                    pattern=f"^{CALLBACK_FAVORITE_CLEAR_ALL}$"
-                ),
+                CallbackQueryHandler(h.select_favorite, pattern=f"^{CALLBACK_FAVORITE_SELECT}"),
+                CallbackQueryHandler(h.ask_delete_favorite, pattern=f"^{CALLBACK_FAVORITE_DELETE}"),
+                CallbackQueryHandler(h.ask_clear_all, pattern=f"^{CALLBACK_FAVORITE_CLEAR_ALL}$"),
                 CallbackQueryHandler(
                     h.handle_pagination,
                     pattern=f"^({CALLBACK_PAGE_PREV}|{CALLBACK_PAGE_NEXT})$"
                 ),
-                CallbackQueryHandler(
-                    h.back_to_diary,
-                    pattern=f"^{CALLBACK_BACK_TO_DIARY}$"
-                ),
-                CallbackQueryHandler(
-                    h.show_favorites_menu,
-                    pattern=f"^{CALLBACK_FAVORITES_MENU}$"
-                ),
+                CallbackQueryHandler(h.back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
+                CallbackQueryHandler(h.show_favorites_menu, pattern=f"^{CALLBACK_FAVORITES_MENU}$"),
             ],
             STATE_ENTER_WEIGHT: [
                 CallbackQueryHandler(
@@ -584,24 +680,32 @@ def get_favorites_handler(db: Database) -> ConversationHandler:
             STATE_SELECT_MEAL_TYPE: [
                 CallbackQueryHandler(
                     h.process_meal_type,
-                    pattern=f"^({CALLBACK_MEAL_PREFIX}|{CALLBACK_FAVORITES_MENU})"
+                    pattern=f"^({CALLBACK_MEAL_PREFIX}|{CALLBACK_FAVORITES_MENU}|{CALLBACK_WEIGHT_CUSTOM})"
+                ),
+            ],
+            # 🎯 НОВОЕ: состояние подтверждения
+            STATE_CONFIRM_ADD: [
+                CallbackQueryHandler(
+                    h.confirm_add,
+                    pattern=f"^({CALLBACK_CONFIRM_ADD}|{CALLBACK_CHANGE_WEIGHT}|{CALLBACK_FAVORITES_MENU})$"
+                ),
+            ],
+            # 🎯 НОВОЕ: состояние после добавления
+            STATE_AFTER_ADD: [
+                CallbackQueryHandler(
+                    h.handle_after_add,
+                    pattern=f"^({CALLBACK_ADD_ANOTHER}|{CALLBACK_SEARCH_AGAIN}|{CALLBACK_FAVORITES_MENU}|{CALLBACK_BACK_TO_DIARY})$"
                 ),
             ],
             STATE_CONFIRM_DELETE: [
-                CallbackQueryHandler(
-                    h.confirm_delete_favorite,
-                    pattern=f"^{CALLBACK_FAVORITE_CONFIRM_DELETE}"
-                ),
+                CallbackQueryHandler(h.confirm_delete_favorite, pattern=f"^{CALLBACK_FAVORITE_CONFIRM_DELETE}"),
                 CallbackQueryHandler(
                     h.cancel_action,
                     pattern=f"^({CALLBACK_FAVORITE_CANCEL}|{CALLBACK_FAVORITES_MENU})$"
                 ),
             ],
             STATE_CONFIRM_CLEAR: [
-                CallbackQueryHandler(
-                    h.confirm_clear_all,
-                    pattern=f"^{CALLBACK_FAVORITE_CONFIRM_CLEAR}$"
-                ),
+                CallbackQueryHandler(h.confirm_clear_all, pattern=f"^{CALLBACK_FAVORITE_CONFIRM_CLEAR}$"),
                 CallbackQueryHandler(
                     h.cancel_action,
                     pattern=f"^({CALLBACK_FAVORITE_CANCEL}|{CALLBACK_FAVORITES_MENU})$"
@@ -609,10 +713,7 @@ def get_favorites_handler(db: Database) -> ConversationHandler:
             ],
         },
         fallbacks=[
-            CallbackQueryHandler(
-                h.back_to_diary,
-                pattern=f"^{CALLBACK_BACK_TO_DIARY}$"
-            ),
+            CallbackQueryHandler(h.back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
             MessageHandler(filters.COMMAND, h.back_to_diary),
         ],
         allow_reentry=True,

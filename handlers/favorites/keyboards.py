@@ -8,11 +8,13 @@ from .constants import (
     CALLBACK_NOOP,
     CALLBACK_FAVORITE_SELECT, CALLBACK_FAVORITE_DELETE,
     CALLBACK_FAVORITE_CONFIRM_DELETE, CALLBACK_FAVORITE_CONFIRM_CLEAR,
-    CALLBACK_FAVORITE_CLEAR_ALL, CALLBACK_FAVORITE_CANCEL,
+    CALLBACK_FAVORITE_CLEAR_ALL,
     CALLBACK_FAVORITES_MENU, CALLBACK_BACK_TO_DIARY,
     CALLBACK_PAGE_PREV, CALLBACK_PAGE_NEXT,
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX,
+    CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
+    CALLBACK_ADD_ANOTHER, CALLBACK_SEARCH_AGAIN,
 )
 
 
@@ -20,10 +22,7 @@ def get_favorites_list_keyboard(
     favorites: List[Dict[str, Any]],
     page: int = 0,
 ) -> InlineKeyboardMarkup:
-    """
-    Главная клавиатура избранного с пагинацией.
-    Для каждого блюда 2 кнопки: «⭐ Выбрать» и «🗑 Удалить».
-    """
+    """Главная клавиатура избранного с пагинацией."""
     total_pages = max(1, (len(favorites) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
 
@@ -45,7 +44,6 @@ def get_favorites_list_keyboard(
             kcal = fav.get("kcal", 0)
             times_used = fav.get("times_used", 1)
 
-            # Кнопка выбора
             buttons.append([
                 InlineKeyboardButton(
                     f"⭐ {name} · {weight:.0f}г · {kcal}ккал (×{times_used})",
@@ -53,7 +51,6 @@ def get_favorites_list_keyboard(
                 )
             ])
 
-            # Кнопка удаления (чуть меньше, с отступом)
             buttons.append([
                 InlineKeyboardButton(
                     f"    🗑 Удалить «{name[:20]}»",
@@ -61,7 +58,6 @@ def get_favorites_list_keyboard(
                 )
             ])
 
-        # Пагинация
         if total_pages > 1:
             nav_row = []
             if page > 0:
@@ -83,7 +79,6 @@ def get_favorites_list_keyboard(
 
             buttons.append(nav_row)
 
-    # Общие действия
     buttons.append([
         InlineKeyboardButton("🍽️ Добавить новую еду", callback_data="food_select_method"),
     ])
@@ -104,15 +99,12 @@ def get_favorites_list_keyboard(
 
 
 def get_weight_keyboard(default_weight: float = 100) -> InlineKeyboardMarkup:
-    """Клавиатура выбора веса с учётом последнего использованного."""
-    # Умные быстрые значения вокруг default_weight
+    """Клавиатура выбора веса."""
     base = int(round(default_weight / 50.0)) * 50
     if base < 50:
         base = 50
     quick_values = [base - 50, base, base + 50, base + 100, base + 150]
-    quick_values = [v for v in quick_values if 10 <= v <= 1000]
-    # Убираем дубликаты и сортируем
-    quick_values = sorted(set(quick_values))[:6]
+    quick_values = sorted(set(v for v in quick_values if 10 <= v <= 1000))[:6]
 
     buttons = []
     row = []
@@ -147,10 +139,32 @@ def get_meal_type_keyboard() -> InlineKeyboardMarkup:
         ])
 
     buttons.append([
-        InlineKeyboardButton("🔙 ← Назад к избранному", callback_data=CALLBACK_FAVORITES_MENU)
+        InlineKeyboardButton("✏️ ← Изменить вес", callback_data=CALLBACK_WEIGHT_CUSTOM),
+        InlineKeyboardButton("🔙 ← К избранному", callback_data=CALLBACK_FAVORITES_MENU),
     ])
 
     return InlineKeyboardMarkup(buttons)
+
+
+def get_confirm_keyboard() -> InlineKeyboardMarkup:
+    """🎯 Клавиатура подтверждения добавления (магия Apple)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Подтвердить", callback_data=CALLBACK_CONFIRM_ADD)],
+        [
+            InlineKeyboardButton("✏️ Изменить вес", callback_data=CALLBACK_CHANGE_WEIGHT),
+            InlineKeyboardButton("🔙 Отмена", callback_data=CALLBACK_FAVORITES_MENU),
+        ],
+    ])
+
+
+def get_after_add_keyboard() -> InlineKeyboardMarkup:
+    """🎯 Экран после успешного добавления (магия Apple)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🍽️ Добавить ещё одно блюдо", callback_data=CALLBACK_ADD_ANOTHER)],
+        [InlineKeyboardButton("🔍 Поискать что-то другое", callback_data=CALLBACK_SEARCH_AGAIN)],
+        [InlineKeyboardButton("⭐ К избранному", callback_data=CALLBACK_FAVORITES_MENU)],
+        [InlineKeyboardButton("📔 Вернуться в дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
+    ])
 
 
 def get_confirm_delete_keyboard(fav_id: int) -> InlineKeyboardMarkup:
