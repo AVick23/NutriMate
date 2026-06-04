@@ -1,20 +1,10 @@
-# handlers/add_food/constants.py
-
-# Состояния ConversationHandler для добавления еды
-(
-    # Выбор способа добавления
-    STATE_SELECT_METHOD,
-    # Текстовый поиск
-    STATE_WAIT_FOR_TEXT,
-    STATE_SELECT_PRODUCT,
-    STATE_SELECT_MEAL_TYPE,
-    STATE_ENTER_WEIGHT,
-    STATE_CONFIRM_ADD,
-    # Штрихкод
-    STATE_WAIT_FOR_BARCODE,
-    # Избранное
-    STATE_SELECT_FAVORITE,
-) = range(8)  # <-- Исправлено с 9 на 8
+"""
+Состояния ConversationHandler для добавления еды
+"""
+# Состояния
+(STATE_SELECT_METHOD, STATE_WAIT_FOR_TEXT, STATE_SELECT_PRODUCT,
+ STATE_SELECT_MEAL_TYPE, STATE_ENTER_WEIGHT, STATE_CONFIRM_ADD,
+ STATE_WAIT_FOR_BARCODE, STATE_SELECT_FAVORITE) = range(8)
 
 # Типы приёмов пищи
 MEAL_TYPES = {
@@ -30,7 +20,6 @@ CALLBACK_TEXT_INPUT = "food_text_input"
 CALLBACK_BARCODE_SCAN = "food_barcode_scan"
 CALLBACK_FAVORITES = "food_favorites"
 CALLBACK_BACK_TO_DIARY = "food_back_to_diary"
-
 CALLBACK_SELECT_MEAL = "food_select_meal"
 CALLBACK_SELECT_PRODUCT = "food_select_product"
 CALLBACK_CONFIRM_ADD = "food_confirm_add"
