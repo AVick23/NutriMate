@@ -46,7 +46,6 @@ from handlers.add_food.api_client import OpenFoodFactsClient
 from handlers.add_food.food_matcher import OptimizedFoodMatcher
 from handlers.add_food.local_foods import POPULAR_FOODS
 from handlers.add_food.voice_recognizer import VoiceRecognizer
-from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class AddFoodHandlers:
         self.api_client = OpenFoodFactsClient()
         self.food_matcher = OptimizedFoodMatcher(POPULAR_FOODS, self.api_client)
 
-        # 🎯 Упрощённая инициализация голосового ввода (только Google Speech)
+        # Голосовой распознаватель (без OpenAI, только Google Speech)
         self.voice_recognizer = VoiceRecognizer()
 
     # ================================================================
@@ -85,6 +84,28 @@ class AddFoodHandlers:
             "last_added_food", "food_search_query",
         ]:
             context.user_data.pop(key, None)
+
+    def _format_products_text(self, products: List[Dict[str, Any]], start_idx: int = 0) -> str:
+        """
+        🎯 Форматирует список продуктов с полным КБЖУ для отображения в сообщении.
+        """
+        text = ""
+        text += "─" * 17 + "\n"
+
+        for i, product in enumerate(products):
+            real_index = start_idx + i
+            name = product["name"][:40]
+            brand = f" ({product.get('brand', '')})" if product.get("brand") else ""
+            kcal = product.get("kcal_100g", 0)
+            protein = product.get("protein_100g", 0)
+            fat = product.get("fat_100g", 0)
+            carbs = product.get("carbs_100g", 0)
+
+            text += f"<b>{real_index + 1}</b> {name}{brand}\n"
+            text += f"🔥 {kcal:.0f} ккал | 🍗 {protein:.1f}г | 🥑 {fat:.1f}г | 🍚 {carbs:.1f}г\n\n"
+
+        text += "─" * 17 + "\n"
+        return text
 
     # ================================================================
     # ВХОДНАЯ ТОЧКА
@@ -144,7 +165,7 @@ class AddFoodHandlers:
     async def _show_popular_foods(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Показывает популярные блюда с пагинацией."""
+        """Показывает популярные блюда с пагинацией и полным КБЖУ."""
         query = update.callback_query
         await query.answer()
 
@@ -159,8 +180,11 @@ class AddFoodHandlers:
             f"🔥 <b>Популярные блюда</b>\n\n"
             f"Всего: {total} блюд\n"
             f"Страница 1 из {pages}\n\n"
-            "Выбери блюдо из списка:"
         )
+
+        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
+        text += self._format_products_text(POPULAR_FOODS[:PAGE_SIZE], start_idx=0)
+        text += "Выбери блюдо из списка:"
 
         await query.edit_message_text(
             text,
@@ -207,7 +231,7 @@ class AddFoodHandlers:
     async def process_text_search(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает текстовый запрос с пагинацией результатов."""
+        """Обрабатывает текстовый запрос с пагинацией и полным КБЖУ."""
         user_input = update.message.text.strip()
 
         food_name, weight, unit = self.food_matcher.parse_quantity_from_text(user_input)
@@ -248,8 +272,11 @@ class AddFoodHandlers:
             f"🔍 <b>Найдено: {total} продуктов</b>\n"
             f"Запрос: <i>«{food_name}»</i>\n"
             f"Страница 1 из {pages}\n\n"
-            "Выбери подходящий вариант:"
         )
+
+        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
+        text += self._format_products_text(products[:PAGE_SIZE], start_idx=0)
+        text += "Выбери подходящий вариант:"
 
         await status_msg.delete()
         await update.message.reply_text(
@@ -296,7 +323,7 @@ class AddFoodHandlers:
     async def handle_pagination(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает пагинацию результатов."""
+        """🎯 Обрабатывает пагинацию результатов с полным КБЖУ."""
         query = update.callback_query
         await query.answer()
 
@@ -314,12 +341,20 @@ class AddFoodHandlers:
 
         context.user_data["search_page"] = new_page
 
+        # 🎯 Получаем продукты для текущей страницы
+        start_idx = new_page * PAGE_SIZE
+        end_idx = start_idx + PAGE_SIZE
+        page_products = results[start_idx:end_idx]
+
         text = (
             f"🔍 <b>Найдено: {len(results)} продуктов</b>\n"
             f"Запрос: <i>«{ctx['query']}»</i>\n"
             f"Страница {new_page + 1} из {total_pages}\n\n"
-            "Выбери подходящий вариант:"
         )
+
+        # 🎯 Полное КБЖУ для продуктов на текущей странице
+        text += self._format_products_text(page_products, start_idx=start_idx)
+        text += "Выбери подходящий вариант:"
 
         await query.edit_message_text(
             text,
@@ -1030,8 +1065,11 @@ class AddFoodHandlers:
             f"🎤 <b>Услышал:</b> <i>«{recognized_text}»</i>\n"
             f"🔍 <b>Нашёл: {total} продуктов</b>\n"
             f"Страница 1 из {pages}\n\n"
-            "Выбери подходящий вариант:"
         )
+
+        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
+        text += self._format_products_text(products[:PAGE_SIZE], start_idx=0)
+        text += "Выбери подходящий вариант:"
 
         await update.message.reply_text(
             text,
@@ -1084,12 +1122,18 @@ class AddFoodHandlers:
         if not results:
             return await self._search_again(update, context)
 
+        # 🎯 Получаем продукты для текущей страницы
+        start_idx = ctx["page"] * PAGE_SIZE
+        end_idx = start_idx + PAGE_SIZE
+        page_products = results[start_idx:end_idx]
+
         text = (
             f"🔍 <b>Результаты поиска</b>\n"
             f"Запрос: <i>«{ctx['query']}»</i>\n"
             f"Страница {ctx['page'] + 1}\n\n"
-            "Выбери продукт:"
         )
+        text += self._format_products_text(page_products, start_idx=start_idx)
+        text += "Выбери продукт:"
 
         target = query.edit_message_text if query else update.message.reply_text
         await target(
