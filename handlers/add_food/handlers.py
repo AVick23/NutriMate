@@ -1,6 +1,10 @@
 """
 Обработчики для добавления еды с пагинацией, голосовым вводом
 и улучшенным распознаванием штрихкодов.
+
+Избранное вынесено в отдельный модуль handlers/favorites/.
+При нажатии "⭐️ Избранное" в меню еды — выходим отсюда
+и попадаем в ConversationHandler избранного.
 """
 import io
 import logging
@@ -21,8 +25,7 @@ from db.models import (
 from handlers.add_food.constants import (
     STATE_SELECT_METHOD, STATE_WAIT_FOR_TEXT, STATE_SELECT_PRODUCT,
     STATE_SELECT_MEAL_TYPE, STATE_ENTER_WEIGHT, STATE_CONFIRM_ADD,
-    STATE_WAIT_FOR_BARCODE, STATE_SELECT_FAVORITE, STATE_AFTER_ADD,
-    STATE_WAIT_FOR_VOICE,
+    STATE_WAIT_FOR_BARCODE, STATE_AFTER_ADD, STATE_WAIT_FOR_VOICE,
     MEAL_TYPES, PAGE_SIZE,
     CALLBACK_METHOD_TEXT, CALLBACK_METHOD_BARCODE, CALLBACK_METHOD_FAVORITES,
     CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE,
@@ -33,14 +36,13 @@ from handlers.add_food.constants import (
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
-    CALLBACK_FAVORITE_PREFIX, CALLBACK_FAV_PAGE_PREV, CALLBACK_FAV_PAGE_NEXT,
     CALLBACK_NOOP, CALLBACK_CANCEL,
 )
 from handlers.add_food.keyboards import (
     get_select_method_keyboard, get_text_input_keyboard, get_barcode_keyboard,
     get_meal_type_keyboard, get_product_selection_keyboard, get_weight_input_keyboard,
     get_confirm_keyboard, get_after_add_keyboard, get_save_favorite_keyboard,
-    get_favorites_keyboard, get_custom_weight_keyboard, get_voice_keyboard,
+    get_custom_weight_keyboard, get_voice_keyboard,
 )
 from handlers.add_food.api_client import OpenFoodFactsClient
 from handlers.add_food.food_matcher import OptimizedFoodMatcher
@@ -60,8 +62,6 @@ class AddFoodHandlers:
         self.favorites_repo = FavoritesRepository(db)
         self.api_client = OpenFoodFactsClient()
         self.food_matcher = OptimizedFoodMatcher(POPULAR_FOODS, self.api_client)
-
-        # Голосовой распознаватель (без OpenAI, только Google Speech)
         self.voice_recognizer = VoiceRecognizer()
 
     # ================================================================
@@ -78,7 +78,6 @@ class AddFoodHandlers:
 
     def _clear_search_context(self, context: ContextTypes.DEFAULT_TYPE):
         """Очищает временные данные поиска, НО сохраняет метод поиска."""
-        # 🎯 Сохраняем метод поиска перед очисткой
         saved_method = context.user_data.get("search_method")
 
         for key in [
@@ -88,14 +87,11 @@ class AddFoodHandlers:
         ]:
             context.user_data.pop(key, None)
 
-        # 🎯 Восстанавливаем метод поиска (чтобы "Новый поиск" помнил контекст)
         if saved_method:
             context.user_data["search_method"] = saved_method
 
     def _format_products_text(self, products: List[Dict[str, Any]], start_idx: int = 0) -> str:
-        """
-        🎯 Форматирует список продуктов с полным КБЖУ для отображения в сообщении.
-        """
+        """Форматирует список продуктов с полным КБЖУ для отображения в сообщении."""
         text = ""
         text += "─" * 17 + "\n"
 
@@ -126,7 +122,7 @@ class AddFoodHandlers:
         if query:
             await query.answer()
 
-        # 🎯 Полный сброс контекста (включая метод поиска)
+        # Полный сброс контекста (включая метод поиска)
         for key in [
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
@@ -161,7 +157,16 @@ class AddFoodHandlers:
         elif method == CALLBACK_METHOD_BARCODE:
             return await self._start_barcode_scan(update, context)
         elif method == CALLBACK_METHOD_FAVORITES:
-            return await self._show_favorites(update, context)
+            # 🎯 ВЫХОД В ВНЕШНИЙ МОДУЛЬ ИЗБРАННОГО
+            # Завершаем текущий ConversationHandler и передаём управление
+            # в handlers/favorites/ через прямой вызов
+            self._clear_search_context(context)
+            context.user_data.pop("search_method", None)
+
+            from handlers.favorites.handlers import FavoritesHandlers
+            fav_handler = FavoritesHandlers(self.db)
+            await fav_handler.show_favorites_menu(update, context)
+            return ConversationHandler.END
         elif method == CALLBACK_METHOD_POPULAR:
             return await self._show_popular_foods(update, context)
         elif method == CALLBACK_METHOD_VOICE:
@@ -182,9 +187,7 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
 
-        # 🎯 Запоминаем метод поиска
         context.user_data["search_method"] = "popular"
-
         context.user_data["search_results"] = POPULAR_FOODS
         context.user_data["search_page"] = 0
         context.user_data["food_search_query"] = "Популярные блюда"
@@ -198,7 +201,6 @@ class AddFoodHandlers:
             f"Страница 1 из {pages}\n\n"
         )
 
-        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
         text += self._format_products_text(POPULAR_FOODS[:PAGE_SIZE], start_idx=0)
         text += "Выбери блюдо из списка:"
 
@@ -223,7 +225,6 @@ class AddFoodHandlers:
         if query:
             await query.answer()
 
-        # 🎯 Запоминаем метод поиска
         context.user_data["search_method"] = "text"
 
         prev_query = context.user_data.get("food_search_query", "")
@@ -293,7 +294,6 @@ class AddFoodHandlers:
             f"Страница 1 из {pages}\n\n"
         )
 
-        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
         text += self._format_products_text(products[:PAGE_SIZE], start_idx=0)
         text += "Выбери подходящий вариант:"
 
@@ -342,7 +342,7 @@ class AddFoodHandlers:
     async def handle_pagination(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """🎯 Обрабатывает пагинацию результатов с полным КБЖУ."""
+        """Обрабатывает пагинацию результатов с полным КБЖУ."""
         query = update.callback_query
         await query.answer()
 
@@ -360,7 +360,6 @@ class AddFoodHandlers:
 
         context.user_data["search_page"] = new_page
 
-        # 🎯 Получаем продукты для текущей страницы
         start_idx = new_page * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
         page_products = results[start_idx:end_idx]
@@ -371,7 +370,6 @@ class AddFoodHandlers:
             f"Страница {new_page + 1} из {total_pages}\n\n"
         )
 
-        # 🎯 Полное КБЖУ для продуктов на текущей странице
         text += self._format_products_text(page_products, start_idx=start_idx)
         text += "Выбери подходящий вариант:"
 
@@ -791,9 +789,7 @@ class AddFoodHandlers:
     async def _decode_barcode_from_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> Optional[str]:
-        """
-        Улучшенное распознавание штрихкода с preprocessing.
-        """
+        """Улучшенное распознавание штрихкода с preprocessing."""
         try:
             photo = update.message.photo[-1]
             file = await context.bot.get_file(photo.file_id)
@@ -801,14 +797,11 @@ class AddFoodHandlers:
 
             image = Image.open(io.BytesIO(file_bytes))
 
-            # Нормализация
             if image.mode in ('RGBA', 'P'):
                 image = image.convert('RGB')
 
-            # Создаём варианты изображения
             variants = self._preprocess_barcode_image(image)
 
-            # Пробуем распознать на каждом варианте
             for processed_image in variants:
                 decoded_objects = decode(processed_image)
 
@@ -832,7 +825,6 @@ class AddFoodHandlers:
         """Создаёт варианты изображения для повышения шансов распознавания."""
         variants = [image]
 
-        # Grayscale + контраст
         try:
             gray = image.convert('L')
             enhanced = ImageEnhance.Contrast(gray).enhance(2.0)
@@ -841,7 +833,6 @@ class AddFoodHandlers:
         except Exception:
             pass
 
-        # Grayscale + sharpening filter
         try:
             gray = image.convert('L')
             sharpened = gray.filter(ImageFilter.SHARPEN)
@@ -849,7 +840,6 @@ class AddFoodHandlers:
         except Exception:
             pass
 
-        # Повороты
         for angle in [90, 180, 270]:
             try:
                 rotated = image.rotate(angle, expand=True)
@@ -883,148 +873,6 @@ class AddFoodHandlers:
             return False
 
     # ================================================================
-    # ИЗБРАННОЕ
-    # ================================================================
-
-    async def _show_favorites(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> int:
-        """Показывает избранное с пагинацией."""
-        query = update.callback_query
-        await query.answer()
-
-        # 🎯 Запоминаем метод поиска
-        context.user_data["search_method"] = "favorites"
-
-        user = update.effective_user
-        user_id = await self.user_repo.get_user_id(user.id)
-        favorites = await self.favorites_repo.get_favorites(user_id, limit=50)
-
-        context.user_data["favorites_list"] = favorites
-        context.user_data["favorites_page"] = 0
-
-        if not favorites:
-            text = (
-                "⭐️ <b>Избранное пусто</b>\n\n"
-                "Добавляй блюда в избранное при записи — "
-                "и они будут здесь для быстрого доступа."
-            )
-        else:
-            text = (
-                f"⭐️ <b>Твоё избранное</b>\n\n"
-                f"Всего: {len(favorites)} блюд\n"
-                "Нажми, чтобы добавить."
-            )
-
-        await query.edit_message_text(
-            text,
-            reply_markup=get_favorites_keyboard(favorites, page=0),
-            parse_mode="HTML"
-        )
-        return STATE_SELECT_FAVORITE
-
-    async def select_favorite(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> int:
-        """
-        🎯 Обрабатывает выбор из избранного.
-        
-        Новая логика:
-        1. Берём сохранённое блюдо
-        2. Пересчитываем КБЖУ на 100г (для работы стандартного механизма)
-        3. Сохраняем последний использованный вес как default_weight
-        4. Переходим к выбору веса (а не сразу к типу приёма пищи)
-        
-        Результат: пользователь видит "⚖️ Сколько грамм?" с подсказкой
-        "💡 Обычно: ~350г" и может выбрать свой вес или подтвердить.
-        """
-        query = update.callback_query
-        await query.answer("✓ Выбрано")
-
-        data = query.data
-
-        if data == CALLBACK_SEARCH_AGAIN:
-            return await self._search_again(update, context)
-
-        if data in (CALLBACK_FAV_PAGE_PREV, CALLBACK_FAV_PAGE_NEXT):
-            return await self._paginate_favorites(update, context, data)
-
-        if data == CALLBACK_NOOP:
-            return STATE_SELECT_FAVORITE
-
-        if not data.startswith(CALLBACK_FAVORITE_PREFIX):
-            return STATE_SELECT_FAVORITE
-
-        try:
-            # 🎯 Теперь это ID блюда в БД, а не индекс в списке
-            fav_id = int(data.replace(CALLBACK_FAVORITE_PREFIX, ""))
-        except ValueError:
-            return STATE_SELECT_FAVORITE
-
-        # Ищем блюдо по ID в списке
-        favorites = context.user_data.get("favorites_list", [])
-        fav = next((f for f in favorites if f["id"] == fav_id), None)
-
-        if not fav:
-            await query.answer("❌ Блюдо не найдено", show_alert=True)
-            return await self._show_favorites(update, context)
-
-        # Увеличиваем счётчик использования
-        await self.favorites_repo.increment_usage(fav_id)
-
-        # 🎯 Пересчитываем КБЖУ на 100г из сохранённых данных порции
-        amount = fav["amount_g"] or 100
-        multiplier = 100 / amount if amount > 0 else 1
-
-        # Формируем selected_product в формате api_client (для работы calculate_for_weight)
-        selected_product = {
-            "code": fav.get("barcode"),
-            "name": fav["food_name"],
-            "brand": "",
-            "quantity": None,
-            "default_weight": amount,  # 🎯 Последний использованный вес как дефолтный
-            "kcal_100g": fav["kcal"] * multiplier,
-            "protein_100g": fav["protein_g"] * multiplier,
-            "fat_100g": fav["fat_g"] * multiplier,
-            "carbs_100g": fav["carbs_g"] * multiplier,
-            "image_url": None,
-        }
-
-        context.user_data["selected_product"] = selected_product
-        # НЕ сохраняем calculated_food — чтобы бот спросил вес
-
-        # 🎯 Переходим к выбору веса (вместо типа приёма пищи)
-        return await self._ask_weight(update, context)
-
-    async def _paginate_favorites(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str
-    ) -> int:
-        """Пагинация избранного."""
-        query = update.callback_query
-        await query.answer()
-
-        favorites = context.user_data.get("favorites_list", [])
-        current_page = context.user_data.get("favorites_page", 0)
-        total_pages = max(1, (len(favorites) + PAGE_SIZE - 1) // PAGE_SIZE)
-
-        if data == CALLBACK_FAV_PAGE_PREV:
-            new_page = max(0, current_page - 1)
-        else:
-            new_page = min(total_pages - 1, current_page + 1)
-
-        context.user_data["favorites_page"] = new_page
-
-        await query.edit_message_text(
-            f"⭐️ <b>Твоё избранное</b>\n\n"
-            f"Всего: {len(favorites)} блюд\n"
-            f"Страница {new_page + 1} из {total_pages}",
-            reply_markup=get_favorites_keyboard(favorites, page=new_page),
-            parse_mode="HTML"
-        )
-
-        return STATE_SELECT_FAVORITE
-
-    # ================================================================
     # ГОЛОСОВОЙ ВВОД
     # ================================================================
 
@@ -1035,7 +883,6 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
 
-        # 🎯 Запоминаем метод поиска
         context.user_data["search_method"] = "voice"
 
         text = (
@@ -1114,7 +961,6 @@ class AddFoodHandlers:
             f"Страница 1 из {pages}\n\n"
         )
 
-        # 🎯 Полное КБЖУ для первых PAGE_SIZE продуктов
         text += self._format_products_text(products[:PAGE_SIZE], start_idx=0)
         text += "Выбери подходящий вариант:"
 
@@ -1143,31 +989,29 @@ class AddFoodHandlers:
         if query:
             await query.answer("🔍 Новый поиск")
 
-        # Получаем метод, которым искал пользователь
         search_method = context.user_data.get("search_method", "text")
-
-        # Сохраняем прошлый запрос для подсказки
         prev_query = context.user_data.get("food_search_query", "")
 
-        # Очищаем результаты поиска, НО НЕ метод
         for key in [
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
         ]:
             context.user_data.pop(key, None)
 
-        # Восстанавливаем прошлый запрос как подсказку
         if prev_query and search_method in ("text", "voice"):
             context.user_data["food_search_query"] = prev_query
 
-        # 🎯 Перенаправляем на соответствующий метод
         if search_method == "voice":
             return await self._start_voice_input(update, context)
-        elif search_method == "favorites":
-            return await self._show_favorites(update, context)
         elif search_method == "popular":
             return await self._show_popular_foods(update, context)
-        else:  # "text" или по умолчанию
+        elif search_method == "favorites":
+            # 🎯 Если был в избранном — выходим во внешний модуль
+            from handlers.favorites.handlers import FavoritesHandlers
+            fav_handler = FavoritesHandlers(self.db)
+            await fav_handler.show_favorites_menu(update, context)
+            return ConversationHandler.END
+        else:
             return await self._start_text_input(update, context)
 
     async def _back_to_results(
@@ -1184,7 +1028,6 @@ class AddFoodHandlers:
         if not results:
             return await self._search_again(update, context)
 
-        # 🎯 Получаем продукты для текущей страницы
         start_idx = ctx["page"] * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
         page_products = results[start_idx:end_idx]
@@ -1226,7 +1069,6 @@ class AddFoodHandlers:
         if query:
             await query.answer()
 
-        # 🎯 Полный сброс контекста
         for key in [
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
@@ -1321,7 +1163,6 @@ def get_add_food_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.select_product, pattern=f"^{CALLBACK_SELECT_PRODUCT}"),
                 CallbackQueryHandler(h._search_again, pattern=f"^{CALLBACK_SEARCH_AGAIN}$"),
                 CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
-                CallbackQueryHandler(h.select_favorite, pattern=f"^{CALLBACK_NOOP}$"),
             ],
             STATE_ENTER_WEIGHT: [
                 CallbackQueryHandler(
@@ -1352,13 +1193,6 @@ def get_add_food_conversation_handler(db: Database) -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_barcode),
                 CallbackQueryHandler(h._back_to_method, pattern=f"^{CALLBACK_BACK_TO_METHOD}$"),
                 CallbackQueryHandler(h._start_text_input, pattern=f"^{CALLBACK_BACK_TO_TEXT}$"),
-                CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
-            ],
-            STATE_SELECT_FAVORITE: [
-                CallbackQueryHandler(
-                    h.select_favorite,
-                    pattern=f"^({CALLBACK_FAVORITE_PREFIX}|{CALLBACK_FAV_PAGE_PREV}|{CALLBACK_FAV_PAGE_NEXT}|{CALLBACK_SEARCH_AGAIN}|{CALLBACK_NOOP})"
-                ),
                 CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
             ],
             STATE_AFTER_ADD: [

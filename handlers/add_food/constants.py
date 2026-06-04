@@ -30,7 +30,7 @@ PAGE_SIZE = 5  # Продуктов на странице
 # ============ Callback: методы добавления ============
 CALLBACK_METHOD_TEXT = "food_method_text"
 CALLBACK_METHOD_BARCODE = "food_method_barcode"
-CALLBACK_METHOD_FAVORITES = "food_method_favorites"
+CALLBACK_METHOD_FAVORITES = "favorites_show"
 CALLBACK_METHOD_POPULAR = "food_method_popular"
 CALLBACK_METHOD_VOICE = "food_method_voice"
 

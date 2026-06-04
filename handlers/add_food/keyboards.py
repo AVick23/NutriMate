@@ -14,7 +14,6 @@ from .constants import (
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
-    CALLBACK_FAVORITE_PREFIX, CALLBACK_FAV_PAGE_PREV, CALLBACK_FAV_PAGE_NEXT,
     CALLBACK_NOOP,
 )
 
@@ -183,64 +182,6 @@ def get_after_add_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔍 Поискать что-то другое", callback_data=CALLBACK_SEARCH_AGAIN)],
         [InlineKeyboardButton("📔 Вернуться в дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
-
-
-def get_favorites_keyboard(
-    favorites: List[Dict[str, Any]],
-    page: int = 0
-) -> InlineKeyboardMarkup:
-    """Клавиатура избранного с пагинацией."""
-    total_pages = max(1, (len(favorites) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-
-    start_idx = page * PAGE_SIZE
-    end_idx = start_idx + PAGE_SIZE
-    page_favs = favorites[start_idx:end_idx]
-
-    buttons = []
-
-    if not favorites:
-        buttons.append([
-            InlineKeyboardButton("😕 Пока ничего нет", callback_data=CALLBACK_NOOP)
-        ])
-    else:
-        for i, fav in enumerate(page_favs):
-            # 🎯 ВАЖНО: используем fav["id"], а не real_index
-            fav_id = fav["id"]
-            name = fav["food_name"][:28]
-            kcal = fav.get("kcal", 0)
-            weight = fav.get("amount_g", 0)
-            times_used = fav.get("times_used", 1)
-            
-            buttons.append([
-                InlineKeyboardButton(
-                    f"⭐ {name} · {weight:.0f}г · {kcal}ккал (×{times_used})",
-                    callback_data=f"{CALLBACK_FAVORITE_PREFIX}{fav_id}"  # 🎯 ID, не индекс
-                )
-            ])
-
-        # Пагинация
-        if total_pages > 1:
-            nav_row = []
-            if page > 0:
-                nav_row.append(InlineKeyboardButton("◀️", callback_data=CALLBACK_FAV_PAGE_PREV))
-            else:
-                nav_row.append(InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
-            nav_row.append(
-                InlineKeyboardButton(f"· {page + 1}/{total_pages} ·", callback_data=CALLBACK_NOOP)
-            )
-            if page < total_pages - 1:
-                nav_row.append(InlineKeyboardButton("▶️", callback_data=CALLBACK_FAV_PAGE_NEXT))
-            else:
-                nav_row.append(InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
-            buttons.append(nav_row)
-
-    buttons.append([
-        InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN),
-        InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY),
-    ])
-
-    return InlineKeyboardMarkup(buttons)
 
 
 def get_barcode_keyboard() -> InlineKeyboardMarkup:
