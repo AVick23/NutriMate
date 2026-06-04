@@ -1,6 +1,4 @@
-# handlers/__init__.py
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-
 from db.database import Database
 from handlers.start import start_command, help_command, show_diary, show_more_menu
 from handlers.registration import get_registration_conversation_handler
@@ -8,12 +6,12 @@ from handlers.add_food import get_add_food_conversation_handler
 from handlers.history_of_add import get_history_conversation_handler
 from handlers.water import get_water_handler
 from handlers.measurements import get_measurements_handler
-from handlers.settings import get_settings_handler  # <-- ДОБАВИТЬ
+from handlers.settings import get_settings_handler
+from handlers.favorites import get_favorites_handler  # 🎯 НОВОЕ
 
 
 def register_all_handlers(app: Application, db: Database) -> None:
     """Регистрирует все обработчики в приложении."""
-
     # Команды
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -21,7 +19,7 @@ def register_all_handlers(app: Application, db: Database) -> None:
     # Callback для показа дневника
     app.add_handler(CallbackQueryHandler(show_diary, pattern="^diary_show$"))
     app.add_handler(CallbackQueryHandler(show_diary, pattern="^diary_back$"))
-    
+
     # Callback для показа меню дополнительных действий
     app.add_handler(CallbackQueryHandler(show_more_menu, pattern="^diary_more$"))
 
@@ -30,15 +28,18 @@ def register_all_handlers(app: Application, db: Database) -> None:
 
     # ConversationHandler для добавления еды
     app.add_handler(get_add_food_conversation_handler(db))
-    
+
     # ConversationHandler для истории записей
     app.add_handler(get_history_conversation_handler(db))
-    
+
     # ConversationHandler для воды
     app.add_handler(get_water_handler(db))
-    
+
     # ConversationHandler для замеров тела
     app.add_handler(get_measurements_handler(db))
-    
+
     # ConversationHandler для настроек
-    app.add_handler(get_settings_handler(db))  # <-- ДОБАВИТЬ
+    app.add_handler(get_settings_handler(db))
+
+    # 🎯 НОВОЕ: ConversationHandler для избранного
+    app.add_handler(get_favorites_handler(db))
