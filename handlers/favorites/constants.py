@@ -12,7 +12,7 @@
 ) = range(5)
 
 # ============ Callback: навигация ============
-CALLBACK_FAVORITES_SHOW = "favorites_show"
+CALLBACK_FAVORITES_SHOW = "food_method_favorites"
 CALLBACK_FAVORITES_MENU = "fav_menu"
 CALLBACK_BACK_TO_DIARY = "fav_back_to_diary"
 
