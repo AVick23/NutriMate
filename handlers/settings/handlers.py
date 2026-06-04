@@ -1,6 +1,5 @@
 # handlers/settings/handlers.py
 import logging
-from datetime import datetime
 from typing import Optional
 
 from telegram import Update
@@ -30,8 +29,8 @@ class SettingsHandlers:
 
     # ========== Главное меню настроек ==========
 
-    async def show_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Показывает главное меню настроек."""
+    async def show_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Показывает главное меню настроек и возвращает состояние."""
         query = update.callback_query
         await query.answer()
 
@@ -41,6 +40,7 @@ class SettingsHandlers:
             reply_markup=get_settings_main_keyboard(),
             parse_mode="HTML"
         )
+        return STATE_EDIT_MENU  # <-- обязательно вернуть состояние
 
     async def handle_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Обрабатывает выбор из главного меню настроек."""
@@ -60,7 +60,7 @@ class SettingsHandlers:
                 reply_markup=get_back_keyboard("settings_menu"),
                 parse_mode="HTML"
             )
-            return ConversationHandler.END
+            return STATE_EDIT_MENU  # остаёмся в меню
 
         if data == CALLBACK_EXPORT_DATA:
             await query.edit_message_text(
@@ -68,7 +68,7 @@ class SettingsHandlers:
                 reply_markup=get_back_keyboard("settings_menu"),
                 parse_mode="HTML"
             )
-            return ConversationHandler.END
+            return STATE_EDIT_MENU
 
         if data == CALLBACK_DELETE_DATA:
             await query.edit_message_text(
@@ -77,9 +77,9 @@ class SettingsHandlers:
                 reply_markup=get_back_keyboard("settings_menu"),
                 parse_mode="HTML"
             )
-            return ConversationHandler.END
+            return STATE_EDIT_MENU
 
-        return ConversationHandler.END
+        return STATE_EDIT_MENU
 
     # ========== Редактирование профиля ==========
 
@@ -94,24 +94,21 @@ class SettingsHandlers:
             await query.edit_message_text("❌ Профиль не найден. Начни с /start")
             return ConversationHandler.END
 
-        # Сохраняем исходные данные для возможности отката
+        # Получаем последний вес из замеров
+        from handlers.measurements.repository import MeasurementsRepository
+        meas_repo = MeasurementsRepository(self.db)
+        last_weight = await meas_repo.get_last_measurement(user_id, 1)
+        current_weight = last_weight["value"] if last_weight else 70.0
+
+        # Инициализация словаря без лишнего ключа weight_kg
         context.user_data["edit_profile"] = {
-            "weight_kg": profile.get("weight_kg"),
+            "weight_kg": current_weight,
             "height_cm": profile["height_cm"],
             "age": profile["age"],
             "gender": profile["gender"],
             "activity_level": profile["activity_level"],
             "goal": profile["goal"],
-            # Здесь нет веса из профиля? Добавим отдельно:
         }
-        # Вес хранится не в user_profiles, а в weight_logs (последний замер). 
-        # Получим последний вес из измерений.
-        from handlers.measurements.repository import MeasurementsRepository
-        meas_repo = MeasurementsRepository(self.db)
-        last_weight = await meas_repo.get_last_measurement(user_id, 1)  # type_id=1 для веса
-        current_weight = last_weight["value"] if last_weight else 70.0  # дефолт
-
-        context.user_data["edit_profile"]["weight_kg"] = current_weight
         context.user_data["edit_profile_original"] = context.user_data["edit_profile"].copy()
 
         text = "👤 <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:"
@@ -134,7 +131,6 @@ class SettingsHandlers:
         if data == CALLBACK_SAVE_PROFILE:
             return await self._confirm_save(update, context)
 
-        # Обработка конкретных параметров
         if data == CALLBACK_EDIT_WEIGHT:
             await query.edit_message_text(
                 "✏️ <b>Введи свой текущий вес</b>\n\nНапример: <code>84.2</code>",
@@ -185,7 +181,6 @@ class SettingsHandlers:
     # ========== Ввод новых значений ==========
 
     async def process_new_weight(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Обрабатывает ввод веса."""
         try:
             weight = float(update.message.text.replace(',', '.'))
             if weight < 30 or weight > 300:
@@ -247,8 +242,6 @@ class SettingsHandlers:
 
     async def _show_edit_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Обновляет меню редактирования после изменения одного параметра."""
-        user = update.effective_user
-        # Для callback-запросов
         if update.callback_query:
             query = update.callback_query
             await query.edit_message_text(
@@ -257,17 +250,13 @@ class SettingsHandlers:
                 parse_mode="HTML"
             )
         else:
-            # Для обычных сообщений
             await update.message.reply_text(
                 "👤 <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:",
                 reply_markup=get_profile_edit_keyboard(context.user_data["edit_profile"]),
                 parse_mode="HTML"
             )
 
-    # ========== Подтверждение и пересчёт ==========
-
     async def _confirm_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Показывает подтверждение перед сохранением."""
         query = update.callback_query
         edited = context.user_data["edit_profile"]
         original = context.user_data["edit_profile_original"]
@@ -299,52 +288,38 @@ class SettingsHandlers:
         return STATE_CONFIRM_SAVE
 
     async def save_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Сохраняет изменения в БД и пересчитывает КБЖУ."""
         query = update.callback_query
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
 
         edited = context.user_data["edit_profile"]
 
-        # 1. Сохраняем новый вес в таблицу замеров
         from handlers.measurements.repository import MeasurementsRepository
         meas_repo = MeasurementsRepository(self.db)
         await meas_repo.add_measurement(user_id, 1, edited["weight_kg"])
 
-        # 2. Обновляем профиль пользователя
+        # Обновляем профиль (сразу все поля)
+        bmr = calculate_bmr(edited["weight_kg"], edited["height_cm"], edited["age"], Gender(edited["gender"]))
+        tdee = calculate_tdee(bmr, ActivityLevel(edited["activity_level"]))
+        goal_enum = Goal(edited["goal"])
+        pace = Pace.STEADY
+        target_kcal = calculate_target_kcal(tdee, goal_enum, pace)
+        macros = calculate_macros(target_kcal, edited["weight_kg"], goal_enum)
+
         profile_data = {
             "height_cm": edited["height_cm"],
             "age": edited["age"],
             "gender": edited["gender"],
             "activity_level": edited["activity_level"],
             "goal": edited["goal"],
-        }
-        await self.user_repo.save_profile(user_id, profile_data)
-
-        # 3. Пересчитываем КБЖУ
-        # Получаем свежий вес из последнего замера
-        last_weight = await meas_repo.get_last_measurement(user_id, 1)
-        weight_kg = last_weight["value"] if last_weight else edited["weight_kg"]
-
-        bmr = calculate_bmr(weight_kg, edited["height_cm"], edited["age"], Gender(edited["gender"]))
-        tdee = calculate_tdee(bmr, ActivityLevel(edited["activity_level"]))
-        goal_enum = Goal(edited["goal"])
-        # Для цели нужен темп – пока используем STEADY (по умолчанию)
-        pace = Pace.STEADY
-        target_kcal = calculate_target_kcal(tdee, goal_enum, pace)
-        macros = calculate_macros(target_kcal, weight_kg, goal_enum)
-
-        # Обновляем профиль с новыми нормами
-        await self.user_repo.save_profile(user_id, {
-            **profile_data,
             "bmr": bmr,
             "daily_kcal": target_kcal,
             "daily_protein_g": macros["protein_g"],
             "daily_fat_g": macros["fat_g"],
             "daily_carbs_g": macros["carbs_g"],
-        })
+        }
+        await self.user_repo.save_profile(user_id, profile_data)
 
-        # 4. Показываем результат
         text = (
             "✅ <b>Профиль обновлён!</b>\n\n"
             f"📏 Рост: {edited['height_cm']} см\n"
@@ -364,38 +339,33 @@ class SettingsHandlers:
             parse_mode="HTML"
         )
 
-        # Очищаем временные данные
         context.user_data.pop("edit_profile", None)
         context.user_data.pop("edit_profile_original", None)
         return ConversationHandler.END
 
     async def cancel_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Отмена редактирования."""
         query = update.callback_query
         await query.answer()
         context.user_data.pop("edit_profile", None)
         context.user_data.pop("edit_profile_original", None)
-        await self.show_settings_menu(update, context)
-        return ConversationHandler.END
+        return await self.show_settings_menu(update, context)
 
     async def _back_to_diary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Возврат в дневник."""
         query = update.callback_query
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
 
 
 def get_settings_handler(db: Database) -> ConversationHandler:
-    """Создаёт ConversationHandler для настроек."""
     handlers = SettingsHandlers(db)
 
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handlers.show_settings_menu, pattern="^settings_show$"),
-            CallbackQueryHandler(handlers.show_settings_menu, pattern="^settings_menu$"),
         ],
         states={
             STATE_EDIT_MENU: [
+                CallbackQueryHandler(handlers.handle_settings_menu, pattern="^settings_"),  # главное меню
                 CallbackQueryHandler(handlers.handle_edit_menu, pattern="^(edit_|save_profile|cancel_edit)"),
             ],
             STATE_EDIT_WEIGHT: [
