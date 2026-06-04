@@ -1,0 +1,206 @@
+# handlers/water/handlers.py
+import logging
+from telegram import Update
+from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
+
+from db.database import Database
+from db.models import UserRepository, WaterRepository, DailyStatsRepository
+
+from .constants import STATE_SELECT_VOLUME, DEFAULT_WATER_ML
+from .utils import get_water_status_text
+from .keyboards import get_water_volume_keyboard
+
+logger = logging.getLogger(__name__)
+
+
+class WaterHandlers:
+    def __init__(self, db: Database):
+        self.db = db
+        self.user_repo = UserRepository(db)
+        self.water_repo = WaterRepository(db)
+        self.stats_repo = DailyStatsRepository(db)
+
+    async def add_water_default(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        Добавляет стандартный стакан воды (250 мл) по нажатию на кнопку воды.
+        """
+        query = update.callback_query
+        user = update.effective_user
+        
+        # Получаем user_id
+        user_id = await self.user_repo.get_user_id(user.id)
+        if not user_id:
+            await query.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+            return
+        
+        # Добавляем воду
+        await self.water_repo.add_water(user_id, DEFAULT_WATER_ML)
+        
+        # Получаем обновлённую статистику
+        today_stats = await self.stats_repo.get_today_stats(user_id)
+        water_goal = 8
+        water_count = today_stats.get("water", 0)
+        status_text = get_water_status_text(water_count, water_goal)
+        
+        # Отвечаем тостом
+        await query.answer(
+            f"💧 +1 стакан ({DEFAULT_WATER_ML} мл)\n{status_text}",
+            show_alert=False
+        )
+        
+        # Обновляем дневник
+        from handlers.start.handlers import show_diary
+        await show_diary(update, context)
+
+    async def show_volume_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """
+        Показывает меню выбора объёма воды.
+        """
+        query = update.callback_query
+        await query.answer()
+        
+        text = (
+            "💧 <b>Выбери объём воды</b>\n\n"
+            "Сколько воды ты выпил?"
+        )
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=get_water_volume_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_SELECT_VOLUME
+
+    async def add_water_with_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """
+        Добавляет воду с выбранным объёмом.
+        """
+        query = update.callback_query
+        user = update.effective_user
+        data = query.data
+        
+        # Извлекаем объём
+        if data == "water_vol_custom":
+            await query.edit_message_text(
+                "✏️ <b>Введи объём в миллилитрах</b>\n\n"
+                "Например: <code>350</code> или <code>0.5</code>",
+                parse_mode="HTML"
+            )
+            return STATE_SELECT_VOLUME
+        
+        try:
+            volume = int(data.replace("water_vol_", ""))
+        except ValueError:
+            await query.answer("❌ Ошибка", show_alert=True)
+            return ConversationHandler.END
+        
+        # Добавляем воду
+        user_id = await self.user_repo.get_user_id(user.id)
+        if not user_id:
+            await query.answer("❌ Пользователь не найден", show_alert=True)
+            return ConversationHandler.END
+        
+        await self.water_repo.add_water(user_id, volume)
+        
+        # Получаем обновлённую статистику
+        today_stats = await self.stats_repo.get_today_stats(user_id)
+        water_goal = 8
+        water_count = today_stats.get("water", 0)
+        status_text = get_water_status_text(water_count, water_goal)
+        
+        # Отвечаем тостом
+        await query.answer(
+            f"💧 +{volume} мл\n{status_text}",
+            show_alert=False
+        )
+        
+        # Возвращаемся в дневник
+        from handlers.start.handlers import show_diary
+        await show_diary(update, context)
+        return ConversationHandler.END
+
+    async def process_custom_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """
+        Обрабатывает ввод своего объёма воды.
+        """
+        user = update.effective_user
+        text = update.message.text.strip()
+        
+        try:
+            if '.' in text or ',' in text:
+                volume = float(text.replace(',', '.'))
+                if volume < 100:
+                    volume = volume * 1000
+            else:
+                volume = int(text)
+            
+            if volume <= 0 or volume > 5000:
+                raise ValueError
+            
+            volume = int(volume)
+            
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Пожалуйста, введи корректный объём (1–5000 мл).\n"
+                "Например: <code>350</code> или <code>0.5</code> (литра)",
+                parse_mode="HTML"
+            )
+            return STATE_SELECT_VOLUME
+        
+        # Добавляем воду
+        user_id = await self.user_repo.get_user_id(user.id)
+        if user_id:
+            await self.water_repo.add_water(user_id, volume)
+            
+            today_stats = await self.stats_repo.get_today_stats(user_id)
+            water_count = today_stats.get("water", 0)
+            water_goal = 8
+            status_text = get_water_status_text(water_count, water_goal)
+            
+            await update.message.reply_text(
+                f"💧 <b>Добавлено {volume} мл</b>\n{status_text}",
+                parse_mode="HTML"
+            )
+        
+        # Показываем дневник
+        from handlers.start.handlers import show_diary
+        await show_diary(update, context)
+        return ConversationHandler.END
+
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Отмена выбора объёма."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+            from handlers.start.handlers import show_diary
+            await show_diary(update, context)
+        return ConversationHandler.END
+
+
+def get_water_handler(db: Database) -> ConversationHandler:
+    """
+    Создаёт ConversationHandler для управления водой.
+    """
+    handlers = WaterHandlers(db)
+    
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(handlers.add_water_default, pattern="^water_add_default$"),
+            CallbackQueryHandler(handlers.show_volume_menu, pattern="^water_show_volumes$"),
+            CallbackQueryHandler(handlers.show_volume_menu, pattern="^water_add$"),
+        ],
+        states={
+            STATE_SELECT_VOLUME: [
+                CallbackQueryHandler(handlers.add_water_with_volume, pattern="^water_vol_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.process_custom_volume),
+                CallbackQueryHandler(handlers.cancel, pattern="^water_back_to_diary$"),
+            ],
+        },
+        fallbacks=[
+            CallbackQueryHandler(handlers.cancel, pattern="^cancel$"),
+        ],
+        allow_reentry=True,
+        per_chat=True,
+        per_user=True,
+        per_message=False,
+    )

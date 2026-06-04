@@ -228,6 +228,37 @@ class DailyStatsRepository:
                 "water": water_stats["water_count"] or 0,
             }
 
+class WaterRepository:
+    """Репозиторий для работы с водой."""
+    
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def add_water(self, user_id: int, amount_ml: int = 250) -> None:
+        """Добавляет запись о воде."""
+        async with self.db.transaction() as conn:
+            await conn.execute(
+                """INSERT INTO water_logs (user_id, amount_ml, logged_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)""",
+                (user_id, amount_ml)
+            )
+
+    async def get_today_count(self, user_id: int) -> int:
+        """Возвращает количество выпитых стаканов за сегодня (250 мл = 1 стакан)."""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                """SELECT COALESCE(SUM(amount_ml), 0) as total_ml
+                   FROM water_logs 
+                   WHERE user_id = ? AND DATE(logged_at) = ?""",
+                (user_id, today)
+            )
+            row = await cursor.fetchone()
+            total_ml = row["total_ml"] if row else 0
+            return int(total_ml / 250)  # переводим в стаканы
+
 
 class HistoryRepository:
     """Репозиторий для работы с историей записей (еда и вода)."""

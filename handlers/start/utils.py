@@ -1,8 +1,7 @@
-# handlers/start/utils.py - удалите функцию parse_food_text, оставьте только:
+# handlers/start/utils.py
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from typing import Optional, Tuple
-import re
+from typing import Optional
 
 
 def format_greeting(first_name: Optional[str] = None) -> str:
@@ -87,6 +86,9 @@ def format_diary_compact(
 
     kcal_percent = int((current_kcal / daily_kcal) * 100) if daily_kcal > 0 else 0
     kcal_bar = format_progress_bar(current_kcal, daily_kcal)
+    
+    # Прогресс-бар воды (8 стаканов = 8 сегментов)
+    water_bar = format_progress_bar(water_current, water_goal, length=8)
 
     return (
         f"📅 <b>{date_str}</b>\n\n"
@@ -94,8 +96,9 @@ def format_diary_compact(
         f"{kcal_bar}\n\n"
         f"🍗 {current_protein:.0f}/{protein_goal}г  ·  "
         f"🥑 {current_fat:.0f}/{fat_goal}г  ·  "
-        f"🍚 {current_carbs:.0f}/{carbs_goal}г\n"
-        f"💧 {water_current} / {water_goal}\n\n"
+        f"🍚 {current_carbs:.0f}/{carbs_goal}г\n\n"
+        f"💧 {water_current} / {water_goal} стаканов\n"
+        f"{water_bar}\n\n"
         f"━━━━━━━━━━━━━━━━━━━"
     )
 
