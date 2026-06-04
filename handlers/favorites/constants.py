@@ -12,24 +12,24 @@
 ) = range(5)
 
 # ============ Callback: навигация ============
-CALLBACK_FAVORITES_SHOW = "favorites_show"           # entry point из дневника
-CALLBACK_FAVORITES_MENU = "fav_menu"                 # возврат в главное меню
+CALLBACK_FAVORITES_SHOW = "favorites_show"
+CALLBACK_FAVORITES_MENU = "fav_menu"
 CALLBACK_BACK_TO_DIARY = "fav_back_to_diary"
 
 # ============ Callback: выбор блюда ============
-CALLBACK_FAVORITE_SELECT = "fav_select_"             # + id
-CALLBACK_FAVORITE_DELETE = "fav_delete_"             # + id (запрос подтверждения)
-CALLBACK_FAVORITE_CONFIRM_DELETE = "fav_confirm_del_"  # + id (подтвердить удаление)
-CALLBACK_FAVORITE_CLEAR_ALL = "fav_clear_all"        # запрос очистки
-CALLBACK_FAVORITE_CONFIRM_CLEAR = "fav_confirm_clear"  # подтвердить очистку
-CALLBACK_FAVORITE_CANCEL = "fav_cancel"              # отмена удаления/очистки
+CALLBACK_FAVORITE_SELECT = "fav_select_"
+CALLBACK_FAVORITE_DELETE = "fav_delete_"
+CALLBACK_FAVORITE_CONFIRM_DELETE = "fav_confirm_del_"
+CALLBACK_FAVORITE_CLEAR_ALL = "fav_clear_all"
+CALLBACK_FAVORITE_CONFIRM_CLEAR = "fav_confirm_clear"
+CALLBACK_FAVORITE_CANCEL = "fav_cancel"  # 🎯 ЭТА СТРОКА БЫЛА ПРОПУЩЕНА
 
 # ============ Callback: вес ============
-CALLBACK_WEIGHT_PREFIX = "fav_weight_"               # fav_weight_100
+CALLBACK_WEIGHT_PREFIX = "fav_weight_"
 CALLBACK_WEIGHT_CUSTOM = "fav_weight_custom"
 
 # ============ Callback: тип приёма пищи ============
-CALLBACK_MEAL_PREFIX = "fav_meal_"                   # fav_meal_breakfast
+CALLBACK_MEAL_PREFIX = "fav_meal_"
 
 # ============ Callback: пагинация ============
 CALLBACK_PAGE_PREV = "fav_page_prev"
@@ -37,9 +37,9 @@ CALLBACK_PAGE_NEXT = "fav_page_next"
 CALLBACK_NOOP = "fav_noop"
 
 # ============ Константы ============
-PAGE_SIZE = 5  # Блюд на странице
+PAGE_SIZE = 5
 
-# Типы приёмов пищи (дублируем из add_food для независимости модуля)
+# Типы приёмов пищи
 MEAL_TYPES = {
     "breakfast": "🥐 Завтрак",
     "lunch": "🍲 Обед",
