@@ -147,7 +147,7 @@ async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🏋️ Тренировка", callback_data="training_add")],
-        [InlineKeyboardButton("⚖️ Вес", callback_data="weight_add")],
+        [InlineKeyboardButton("📏 Замеры тела", callback_data="measurements_menu")],
         [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
         [InlineKeyboardButton("📜 История", callback_data="history_show")],  # <-- НОВАЯ КНОПКА
         [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],

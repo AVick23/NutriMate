@@ -6,7 +6,8 @@ from handlers.start import start_command, help_command, show_diary, show_more_me
 from handlers.registration import get_registration_conversation_handler
 from handlers.add_food import get_add_food_conversation_handler
 from handlers.history_of_add import get_history_conversation_handler
-from handlers.water import get_water_handler  # добавляем импорт
+from handlers.water import get_water_handler
+from handlers.measurements import get_measurements_handler  # <-- ДОБАВИТЬ
 
 
 def register_all_handlers(app: Application, db: Database) -> None:
@@ -34,3 +35,6 @@ def register_all_handlers(app: Application, db: Database) -> None:
     
     # ConversationHandler для воды
     app.add_handler(get_water_handler(db))
+    
+    # ConversationHandler для замеров тела
+    app.add_handler(get_measurements_handler(db))  # <-- ДОБАВИТЬ
