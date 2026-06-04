@@ -18,13 +18,13 @@ class OpenFoodFactsClient:
     3. API V1 (устаревший, только точное совпадение)
     """
 
-    # Search-a-licious — правильный URL (без /api/v1/)
+    # Search-a-licious
     SEARCH_URL_SAL = "https://search.openfoodfacts.org/search"
     
-    # API V2 (стабильный, современный)
+    # API V2
     SEARCH_URL_V2 = "https://world.openfoodfacts.org/api/v2/search"
     
-    # API V1 (устаревший, резервный)
+    # API V1
     SEARCH_URL_V1 = "https://world.openfoodfacts.org/cgi/search.pl"
     
     # Эндпоинт для штрихкодов
@@ -54,7 +54,7 @@ class OpenFoodFactsClient:
             logger.debug(f"Cache hit: {query}")
             return self._cache[cache_key]
 
-        # 1. Search-a-licious (самый современный)
+        # 1. Search-a-licious
         for attempt in range(retries + 1):
             try:
                 products = await self._search_sal(query, page, page_size)
@@ -92,7 +92,6 @@ class OpenFoodFactsClient:
     async def _search_sal(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
         Search-a-licious — новая поисковая система на Elasticsearch.
-        Правильный URL: https://search.openfoodfacts.org/search
         """
         params = {
             "q": query,
@@ -106,18 +105,31 @@ class OpenFoodFactsClient:
 
         products = []
         
-        # Search-a-licious возвращает продукты в поле "hits"
-        if "hits" in data:
-            for hit in data.get("hits", {}).get("hits", []):
-                product = hit.get("_source", {})
+        # Search-a-licious может возвращать разные форматы:
+        # 1. Прямой список продуктов
+        # 2. Объект с полем "products"
+        # 3. Объект с полем "hits" (Elasticsearch format)
+        
+        if isinstance(data, list):
+            # Прямой список продуктов
+            for product in data:
                 parsed = self._parse_product(product)
                 if parsed and parsed.get("kcal_100g"):
                     products.append(parsed)
-        elif "products" in data:
-            for product in data.get("products", []):
-                parsed = self._parse_product(product)
-                if parsed and parsed.get("kcal_100g"):
-                    products.append(parsed)
+        elif isinstance(data, dict):
+            # Объект с полем "products"
+            if "products" in data:
+                for product in data.get("products", []):
+                    parsed = self._parse_product(product)
+                    if parsed and parsed.get("kcal_100g"):
+                        products.append(parsed)
+            # Elasticsearch формат с "hits"
+            elif "hits" in data:
+                for hit in data.get("hits", {}).get("hits", []):
+                    product = hit.get("_source", {})
+                    parsed = self._parse_product(product)
+                    if parsed and parsed.get("kcal_100g"):
+                        products.append(parsed)
 
         return products
 
@@ -174,7 +186,7 @@ class OpenFoodFactsClient:
             return None
 
     def _parse_products(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Извлекает и парсит продукты из ответа API."""
+        """Извлекает и парсит продукты из ответа API V1/V2."""
         products = []
         for product in data.get("products", []):
             parsed = self._parse_product(product)
