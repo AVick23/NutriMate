@@ -674,7 +674,7 @@ class AddFoodHandlers:
         
         # Очищаем временные данные
         for key in ["search_results", "selected_product", "calculated_food", 
-                     "meal_type", "food_weight", "last_added_food", "food_search_query"]:
+                    "meal_type", "food_weight", "last_added_food", "food_search_query"]:
             context.user_data.pop(key, None)
         
         # Получаем данные для дневника
@@ -692,6 +692,7 @@ class AddFoodHandlers:
         
         from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
         
+        # ИСПРАВЛЕНО: Убрали параметр 'water_current' который не поддерживается
         diary_text = format_diary_compact(
             daily_kcal=profile["daily_kcal"],
             current_kcal=today_stats.get("kcal", 0),
@@ -701,7 +702,7 @@ class AddFoodHandlers:
             current_fat=today_stats.get("fat", 0),
             carbs_goal=profile["daily_carbs_g"],
             current_carbs=today_stats.get("carbs", 0),
-            water_current=today_stats.get("water", 0),
+            # water_current убран из параметров [[не существует в функции]]
         )
         
         text = f"{greeting}\n\n{diary_text}"
