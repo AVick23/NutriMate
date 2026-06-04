@@ -1,14 +1,13 @@
 """
-Упрощённый матчер с предобработкой запроса и приоритетом API.
+Матчер с предобработкой запроса для улучшения результатов поиска.
+Использует pymorphy2 + Levenshtein + API fallback.
 """
 import re
 import logging
 from typing import Optional, List, Dict, Any, Tuple
-from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
-# Внешние зависимости
 try:
     import Levenshtein
     HAS_LEVENSHTEIN = True
@@ -23,9 +22,12 @@ except ImportError:
 
 
 class OptimizedFoodMatcher:
-    """Матчер с предобработкой запроса для улучшения результатов API."""
-    
-    STOP_WORDS = {'с', 'без', 'в', 'на', 'из', 'от', 'до', 'для', 'к', 'по', 'при', 'и', 'или', 'а', 'но', 'да'}
+    """Матчер с предобработкой запроса."""
+
+    STOP_WORDS = {
+        'с', 'без', 'в', 'на', 'из', 'от', 'до', 'для',
+        'к', 'по', 'при', 'и', 'или', 'а', 'но', 'да'
+    }
 
     NUMBER_WORDS = {
         'один': 1, 'одна': 1, 'одно': 1,
@@ -36,7 +38,9 @@ class OptimizedFoodMatcher:
         'полтора': 1.5, 'полторы': 1.5,
     }
 
-    def __init__(self, food_database: List[Dict[str, Any]], api_client=None):
+    def __init__(
+        self, food_database: List[Dict[str, Any]], api_client=None
+    ):
         self.database = food_database
         self.api_client = api_client
 
@@ -49,6 +53,7 @@ class OptimizedFoodMatcher:
                 logger.warning(f"pymorphy2 не загружен: {e}")
 
     def preprocess_query(self, query: str) -> str:
+        """Предобработка запроса: опечатки → парсинг веса → лемматизация."""
         original = query
         query = query.lower().strip()
 
@@ -70,12 +75,14 @@ class OptimizedFoodMatcher:
         return query
 
     def _fix_typos(self, query: str) -> str:
+        """Исправление опечаток через расстояние Левенштейна."""
         words = query.split()
         corrected = []
         for w in words:
             if len(w) < 3:
                 corrected.append(w)
                 continue
+
             best_match = None
             best_dist = 2
             for food in self.database:
@@ -90,8 +97,10 @@ class OptimizedFoodMatcher:
         return ' '.join(corrected)
 
     def _lemmatize_query(self, query: str) -> str:
+        """Лемматизация запроса."""
         if not self.morph:
             return query
+
         words = query.split()
         lemmatized = []
         for w in words:
@@ -104,17 +113,27 @@ class OptimizedFoodMatcher:
                         lemmatized.append(parsed[0].normal_form)
                     else:
                         lemmatized.append(w)
-                except:
+                except Exception:
                     lemmatized.append(w)
         return ' '.join(lemmatized)
 
-    def parse_quantity_from_text(self, text: str) -> Tuple[str, Optional[float], Optional[str]]:
+    def parse_quantity_from_text(
+        self, text: str
+    ) -> Tuple[str, Optional[float], Optional[str]]:
+        """
+        Парсит вес из текста.
+        Возвращает: (очищенный текст, вес, единица измерения).
+        """
         original = text
         text = text.strip().lower()
         multiplier = None
         unit = None
 
-        match = re.search(r'(\d+(?:[.,]\d+)?)\s*(г|гр|g|gr|кг|kg|мл|ml|л|l|шт|штук|кусок|порц)\b', text)
+        # Паттерн 1: "300г", "1.5 кг", "200 мл"
+        match = re.search(
+            r'(\d+(?:[.,]\d+)?)\s*(г|гр|g|gr|кг|kg|мл|ml|л|l|шт|штук|кусок|порц)\b',
+            text
+        )
         if match:
             multiplier = float(match.group(1).replace(',', '.'))
             raw = match.group(2)
@@ -122,17 +141,22 @@ class OptimizedFoodMatcher:
                 unit = 'г'
             elif raw in ('кг', 'kg'):
                 unit = 'г'
-                multiplier *= 1000 
+                multiplier *= 1000
             elif raw in ('мл', 'ml'):
                 unit = 'мл'
             elif raw in ('л', 'l'):
                 unit = 'мл'
                 multiplier *= 1000
             else:
-                unit = ' шт'
-            text = re.sub(r'\d+(?:[.,]\d+)?\s*(?:г|гр|g|gr|кг|kg|мл|ml|л|l|шт|штук|кусок|порц)\b', '', text).strip()
+                unit = 'шт'
+
+            text = re.sub(
+                r'\d+(?:[.,]\d+)?\s*(?:г|гр|g|gr|кг|kg|мл|ml|л|l|шт|штук|кусок|порц)\b',
+                '', text
+            ).strip()
             return (text if text else original, multiplier, unit)
 
+        # Паттерн 2: "300" в конце строки
         match = re.search(r'(\d+(?:[.,]\d+)?)\s*$', text)
         if match:
             multiplier = float(match.group(1).replace(',', '.'))
@@ -140,6 +164,7 @@ class OptimizedFoodMatcher:
             text = text[:match.start()].strip()
             return (text if text else original, multiplier, unit)
 
+        # Паттерн 3: "два яблока"
         for word, num in self.NUMBER_WORDS.items():
             if word in text:
                 multiplier = num
@@ -149,7 +174,10 @@ class OptimizedFoodMatcher:
 
         return original, None, None
 
-    async def search_with_api_fallback(self, user_input: str) -> List[Dict[str, Any]]:
+    async def search_with_api_fallback(
+        self, user_input: str
+    ) -> List[Dict[str, Any]]:
+        """Поиск с fallback: API → локальная база."""
         processed_query = self.preprocess_query(user_input)
 
         if self.api_client:
@@ -170,12 +198,14 @@ class OptimizedFoodMatcher:
         return []
 
     def _search_local(self, query: str) -> List[Dict[str, Any]]:
+        """Простой локальный поиск по подстроке."""
         if not self.database:
             return []
+
         query = query.lower()
         results = []
         for food in self.database:
             name = food["name"].lower()
             if query in name or any(q in name for q in query.split()):
                 results.append(food)
-        return results[:5]
+        return results
