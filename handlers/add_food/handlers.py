@@ -149,21 +149,30 @@ class AddFoodHandlers:
         return STATE_WAIT_FOR_TEXT
 
     async def process_text_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Обрабатывает текстовый запрос."""
+        """Обрабатывает текстовый запрос с предобработкой и API V3."""
         user_input = update.message.text.strip()
-        food_name, weight = parse_food_text(user_input)
-
+        
+        # Используем улучшенный парсер из food_matcher
+        food_name, weight, unit = self.food_matcher.parse_quantity_from_text(user_input)
+        
+        # Если единица измерения не 'г', преобразуем или игнорируем
+        if unit and unit != 'г':
+            # Для штук и мл пока не делаем автоматический пересчёт
+            weight = None
+        
         context.user_data["food_search_query"] = food_name
         if weight:
             context.user_data["food_weight"] = weight
 
         status_msg = await update.message.reply_text("🔍 Ищу продукты...")
+        
+        # Поиск с предобработкой (API V3 → fallback)
         products = await self.food_matcher.search_with_api_fallback(food_name)
 
         if not products:
             await status_msg.edit_text(
                 f"❌ По запросу <i>«{food_name}»</i> ничего не найдено.\n"
-                "Попробуй написать по-другому.",
+                "Попробуй написать по-другому или проверь опечатки.",
                 reply_markup=get_back_keyboard("food_back_to_diary"),
                 parse_mode="HTML"
             )
@@ -171,7 +180,7 @@ class AddFoodHandlers:
 
         context.user_data["search_results"] = products
 
-        text = f"🔍 <b>Вот что я нашёл:</b>\n<i>«{food_name}»</i>\n\n"
+        text = f"🔍 <b>Вот что я нашёл по запросу:</b>\n<i>«{food_name}»</i>\n\n"
         text += "─" * 17 + "\n"
 
         for i, product in enumerate(products[:5]):
