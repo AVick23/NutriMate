@@ -152,6 +152,83 @@ class MetricsHandlers:
         return STATE_MAIN_MENU
 
     # ================================================================
+    # ОБРАБОТКА РЕДАКТИРОВАНИЯ (НОВЫЕ МЕТОДЫ)
+    # ================================================================
+
+    async def handle_edit_actions(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает выбор параметра для редактирования."""
+        query = update.callback_query
+        await query.answer()
+
+        data = query.data
+
+        if data == CALLBACK_EDIT_SLEEP:
+            return await self._edit_sleep(update, context)
+        elif data == CALLBACK_EDIT_ENERGY_MORNING:
+            return await self._edit_energy_morning(update, context)
+        elif data == CALLBACK_EDIT_ENERGY_EVENING:
+            return await self._edit_energy_evening(update, context)
+        elif data == CALLBACK_EDIT_STRESS:
+            return await self._edit_stress(update, context)
+        elif data == CALLBACK_EDIT_STEPS:
+            return await self._edit_steps(update, context)
+        elif data == CALLBACK_EDIT_WORKOUT:
+            return await self._edit_workout(update, context)
+        elif data == CALLBACK_CONFIRM_ALL:
+            return await self.confirm_and_save(update, context)
+        elif data == CALLBACK_METRICS_BACK_TO_MENU:
+            return await self.show_metrics_menu(update, context)
+
+        return STATE_MAIN_MENU
+
+    async def _edit_sleep(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование сна."""
+        query = update.callback_query
+        text = (
+            f"{EMOJI_SLEEP} <b>Редактирование сна</b>\n\n"
+            "Сколько часов ты спал?"
+        )
+        await self._safe_edit_message(query, text, get_sleep_keyboard())
+        return STATE_SLEEP_HOURS
+
+    async def _edit_energy_morning(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование энергии утром."""
+        query = update.callback_query
+        text = f"{EMOJI_ENERGY} <b>Редактирование энергии утром</b>\n\nОцени энергию от 1 до 10:"
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_morning"))
+        return STATE_ENERGY_MORNING
+
+    async def _edit_energy_evening(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование энергии вечером."""
+        query = update.callback_query
+        text = f"{EMOJI_ENERGY} <b>Редактирование энергии вечером</b>\n\nОцени энергию от 1 до 10:"
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_evening"))
+        return STATE_ENERGY_EVENING
+
+    async def _edit_stress(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование стресса."""
+        query = update.callback_query
+        text = f"{EMOJI_STRESS} <b>Редактирование стресса</b>\n\nОцени уровень стресса от 1 до 10:"
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("stress"))
+        return STATE_STRESS
+
+    async def _edit_steps(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование шагов."""
+        query = update.callback_query
+        text = f"{EMOJI_STEPS} <b>Редактирование шагов</b>\n\nСколько шагов ты прошёл?"
+        await self._safe_edit_message(query, text, get_steps_keyboard())
+        return STATE_STEPS
+
+    async def _edit_workout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование тренировки."""
+        query = update.callback_query
+        text = f"{EMOJI_WORKOUT} <b>Редактирование тренировки</b>\n\nКакая была тренировка?"
+        await self._safe_edit_message(query, text, get_workout_type_keyboard())
+        return STATE_WORKOUT_TYPE
+
+    # ================================================================
     # ПОШАГОВЫЙ СБОР МЕТРИК
     # ================================================================
 
@@ -769,8 +846,7 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
         states={
             STATE_MAIN_MENU: [
                 CallbackQueryHandler(h.handle_main_menu, pattern="^metrics_"),
-                CallbackQueryHandler(h._show_edit_menu, pattern="^edit_"),
-                CallbackQueryHandler(h.confirm_and_save, pattern=f"^{CALLBACK_CONFIRM_ALL}$"),
+                CallbackQueryHandler(h.handle_edit_actions, pattern="^(edit_|metrics_back_to_menu|metrics_confirm_all)"),
             ],
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern="^(sleep_|sleep_custom)"),
