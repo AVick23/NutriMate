@@ -14,7 +14,16 @@
     STATE_SELECT_FAVORITE,     # Выбор из избранного
     STATE_AFTER_ADD,           # Экран после успешного добавления
     STATE_WAIT_FOR_VOICE,      # Ожидание голосового сообщения
-) = range(10)
+    # Ручной ввод
+    STATE_MANUAL_INPUT,        # Ввод по шаблону
+    STATE_MANUAL_NAME,         # Название
+    STATE_MANUAL_WEIGHT,       # Вес
+    STATE_MANUAL_KCAL,         # Калории
+    STATE_MANUAL_PROTEIN,      # Белки
+    STATE_MANUAL_FAT,          # Жиры
+    STATE_MANUAL_CARBS,        # Углеводы
+    STATE_MANUAL_CONFIRM,      # Подтверждение
+) = range(18)
 
 # ============ Типы приёмов пищи ============
 MEAL_TYPES = {
@@ -33,6 +42,7 @@ CALLBACK_METHOD_BARCODE = "food_method_barcode"
 CALLBACK_METHOD_FAVORITES = "favorites_show"
 CALLBACK_METHOD_POPULAR = "food_method_popular"
 CALLBACK_METHOD_VOICE = "food_method_voice"
+CALLBACK_METHOD_MANUAL = "food_method_manual"  # 🎯 НОВОЕ
 
 # ============ Callback: навигация ============
 CALLBACK_BACK_TO_DIARY = "food_back_to_diary"
@@ -70,6 +80,11 @@ CALLBACK_SAVE_FAVORITE_NO = "food_save_favorite_no"
 CALLBACK_FAVORITE_PREFIX = "food_fav_"
 CALLBACK_FAV_PAGE_PREV = "fav_page_prev"
 CALLBACK_FAV_PAGE_NEXT = "fav_page_next"
+
+# ============ Callback: ручной ввод ============
+CALLBACK_MANUAL_SKIP = "food_manual_skip"
+CALLBACK_MANUAL_CONFIRM = "food_manual_confirm"
+CALLBACK_MANUAL_EDIT = "food_manual_edit"
 
 # ============ Callback: служебные ============
 CALLBACK_NOOP = "food_noop"

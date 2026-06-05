@@ -1,6 +1,6 @@
 """
-Обработчики для добавления еды с пагинацией, голосовым вводом
-и улучшенным распознаванием штрихкодов.
+Обработчики для добавления еды с пагинацией, голосовым вводом,
+улучшенным распознаванием штрихкодов и ручным вводом.
 
 Избранное вынесено в отдельный модуль handlers/favorites/.
 При нажатии "⭐️ Избранное" в меню еды — выходим отсюда
@@ -26,9 +26,12 @@ from handlers.add_food.constants import (
     STATE_SELECT_METHOD, STATE_WAIT_FOR_TEXT, STATE_SELECT_PRODUCT,
     STATE_SELECT_MEAL_TYPE, STATE_ENTER_WEIGHT, STATE_CONFIRM_ADD,
     STATE_WAIT_FOR_BARCODE, STATE_AFTER_ADD, STATE_WAIT_FOR_VOICE,
+    STATE_MANUAL_INPUT, STATE_MANUAL_NAME, STATE_MANUAL_WEIGHT,
+    STATE_MANUAL_KCAL, STATE_MANUAL_PROTEIN, STATE_MANUAL_FAT,
+    STATE_MANUAL_CARBS, STATE_MANUAL_CONFIRM,
     MEAL_TYPES, PAGE_SIZE,
     CALLBACK_METHOD_TEXT, CALLBACK_METHOD_BARCODE, CALLBACK_METHOD_FAVORITES,
-    CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE,
+    CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE, CALLBACK_METHOD_MANUAL,
     CALLBACK_BACK_TO_DIARY, CALLBACK_BACK_TO_METHOD,
     CALLBACK_BACK_TO_TEXT, CALLBACK_BACK_TO_RESULTS, CALLBACK_BACK_TO_WEIGHT,
     CALLBACK_SEARCH_AGAIN, CALLBACK_SELECT_PRODUCT,
@@ -36,18 +39,21 @@ from handlers.add_food.constants import (
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
-    CALLBACK_NOOP, CALLBACK_CANCEL,
+    CALLBACK_NOOP, CALLBACK_CANCEL, CALLBACK_MANUAL_SKIP,
+    CALLBACK_MANUAL_CONFIRM, CALLBACK_MANUAL_EDIT,
 )
 from handlers.add_food.keyboards import (
     get_select_method_keyboard, get_text_input_keyboard, get_barcode_keyboard,
     get_meal_type_keyboard, get_product_selection_keyboard, get_weight_input_keyboard,
     get_confirm_keyboard, get_after_add_keyboard, get_save_favorite_keyboard,
-    get_custom_weight_keyboard, get_voice_keyboard,
+    get_custom_weight_keyboard, get_voice_keyboard, get_manual_input_keyboard,
+    get_manual_skip_keyboard, get_manual_confirm_keyboard,
 )
 from handlers.add_food.api_client import OpenFoodFactsClient
 from handlers.add_food.food_matcher import OptimizedFoodMatcher
 from handlers.add_food.local_foods import POPULAR_FOODS
 from handlers.add_food.voice_recognizer import VoiceRecognizer
+from handlers.add_food.utils import parse_manual_template, format_manual_product_for_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +133,7 @@ class AddFoodHandlers:
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
             "last_added_food", "food_search_query", "search_method",
+            "manual_product",
         ]:
             context.user_data.pop(key, None)
 
@@ -171,6 +178,8 @@ class AddFoodHandlers:
             return await self._show_popular_foods(update, context)
         elif method == CALLBACK_METHOD_VOICE:
             return await self._start_voice_input(update, context)
+        elif method == CALLBACK_METHOD_MANUAL:
+            return await self._start_manual_input(update, context)
         elif method == CALLBACK_BACK_TO_DIARY:
             return await self._back_to_diary(update, context)
 
@@ -975,6 +984,323 @@ class AddFoodHandlers:
         return STATE_SELECT_PRODUCT
 
     # ================================================================
+    # РУЧНОЙ ВВОД
+    # ================================================================
+
+    async def _start_manual_input(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Начинает ручной ввод продукта."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        context.user_data["search_method"] = "manual"
+
+        text = (
+            "➕ <b>Ручной ввод продукта</b>\n\n"
+            "Отправь данные в свободном формате:\n\n"
+            "<b>Пример:</b>\n"
+            "<code>Гречка с котлетой\n"
+            "350г\n"
+            "578 ккал\n"
+            "Б: 33.3 Ж: 28.7 У: 49</code>\n\n"
+            "Или в одну строку:\n"
+            "<code>Гречка 350г 578ккал Б33 Ж28 У49</code>\n\n"
+            "<i>Я пойму и посчитаю всё сам! 🧠</i>"
+        )
+
+        target = query.edit_message_text if query else update.message.reply_text
+        await target(
+            text,
+            reply_markup=get_manual_input_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_INPUT
+
+    async def process_manual_input(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """
+        🎯 Обрабатывает ручной ввод.
+        Пытается распознать шаблон, если не получилось — переходит к поэтапному вводу.
+        """
+        user_input = update.message.text.strip()
+
+        # Пытаемся распознать шаблон
+        parsed = parse_manual_template(user_input)
+
+        if parsed:
+            # 🎯 Магия: бот понял всё с первого раза!
+            context.user_data["manual_product"] = parsed
+            return await self._show_manual_confirmation(update, context)
+        else:
+            # Не получилось — переходим к поэтапному вводу
+            await update.message.reply_text(
+                "🤔 Не совсем понял формат. Давай введём по шагам!\n\n"
+                "<b>Шаг 1/6:</b> Как называется продукт?",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_NAME
+
+    async def process_manual_name(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод названия."""
+        name = update.message.text.strip()
+
+        if not name:
+            await update.message.reply_text(
+                "❌ Название не может быть пустым. Попробуй ещё раз:",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_NAME
+
+        context.user_data["manual_product"] = {
+            "name": name,
+            "weight": 100.0,
+            "kcal": None,
+            "protein": 0.0,
+            "fat": 0.0,
+            "carbs": 0.0,
+        }
+
+        await update.message.reply_text(
+            f"✅ <b>{name}</b>\n\n"
+            "<b>Шаг 2/6:</b> Какой вес порции (в граммах)?\n"
+            "<i>Или нажми 'Пропустить' (будет 100г)</i>",
+            reply_markup=get_manual_skip_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_WEIGHT
+
+    async def process_manual_weight(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод веса."""
+        # Если нажали "Пропустить"
+        if update.callback_query and update.callback_query.data == CALLBACK_MANUAL_SKIP:
+            await update.callback_query.answer("⏭ Пропущено (100г)")
+            return await self._ask_manual_kcal(update, context)
+
+        # Парсим число
+        try:
+            weight = float(update.message.text.strip().replace(',', '.'))
+            if weight <= 0 or weight > 10000:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введи число от 1 до 10000 грамм.\n"
+                "Например: <code>350</code>",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_WEIGHT
+
+        context.user_data["manual_product"]["weight"] = weight
+        return await self._ask_manual_kcal(update, context)
+
+    async def _ask_manual_kcal(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает калории."""
+        product = context.user_data.get("manual_product", {})
+        name = product.get("name", "")
+
+        target = update.callback_query.edit_message_text if update.callback_query else update.message.reply_text
+        await target(
+            f"✅ Вес: <b>{product['weight']:.0f}г</b>\n\n"
+            f"<b>Шаг 3/6:</b> Сколько калорий в <b>{name}</b>?",
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_KCAL
+
+    async def process_manual_kcal(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод калорий."""
+        try:
+            kcal = int(float(update.message.text.strip().replace(',', '.')))
+            if kcal <= 0 or kcal > 5000:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введи число от 1 до 5000 ккал.\n"
+                "Например: <code>578</code>",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_KCAL
+
+        context.user_data["manual_product"]["kcal"] = kcal
+        return await self._ask_manual_protein(update, context)
+
+    async def _ask_manual_protein(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает белки."""
+        await update.message.reply_text(
+            f"✅ Калории: <b>{context.user_data['manual_product']['kcal']} ккал</b>\n\n"
+            "<b>Шаг 4/6:</b> Сколько белков (в граммах)?\n"
+            "<i>Или нажми 'Пропустить'</i>",
+            reply_markup=get_manual_skip_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_PROTEIN
+
+    async def process_manual_protein(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод белков."""
+        if update.callback_query and update.callback_query.data == CALLBACK_MANUAL_SKIP:
+            await update.callback_query.answer("⏭ Пропущено")
+            return await self._ask_manual_fat(update, context)
+
+        try:
+            protein = float(update.message.text.strip().replace(',', '.'))
+            if protein < 0 or protein > 1000:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введи число от 0 до 1000 грамм.\n"
+                "Например: <code>33.3</code>",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_PROTEIN
+
+        context.user_data["manual_product"]["protein"] = protein
+        return await self._ask_manual_fat(update, context)
+
+    async def _ask_manual_fat(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает жиры."""
+        target = update.callback_query.edit_message_text if update.callback_query else update.message.reply_text
+        await target(
+            f"✅ Белки: <b>{context.user_data['manual_product']['protein']:.1f}г</b>\n\n"
+            "<b>Шаг 5/6:</b> Сколько жиров (в граммах)?\n"
+            "<i>Или нажми 'Пропустить'</i>",
+            reply_markup=get_manual_skip_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_FAT
+
+    async def process_manual_fat(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод жиров."""
+        if update.callback_query and update.callback_query.data == CALLBACK_MANUAL_SKIP:
+            await update.callback_query.answer("⏭ Пропущено")
+            return await self._ask_manual_carbs(update, context)
+
+        try:
+            fat = float(update.message.text.strip().replace(',', '.'))
+            if fat < 0 or fat > 1000:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введи число от 0 до 1000 грамм.\n"
+                "Например: <code>28.7</code>",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_FAT
+
+        context.user_data["manual_product"]["fat"] = fat
+        return await self._ask_manual_carbs(update, context)
+
+    async def _ask_manual_carbs(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает углеводы."""
+        target = update.callback_query.edit_message_text if update.callback_query else update.message.reply_text
+        await target(
+            f"✅ Жиры: <b>{context.user_data['manual_product']['fat']:.1f}г</b>\n\n"
+            "<b>Шаг 6/6:</b> Сколько углеводов (в граммах)?\n"
+            "<i>Или нажми 'Пропустить'</i>",
+            reply_markup=get_manual_skip_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_CARBS
+
+    async def process_manual_carbs(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод углеводов."""
+        if update.callback_query and update.callback_query.data == CALLBACK_MANUAL_SKIP:
+            await update.callback_query.answer("⏭ Пропущено")
+            return await self._show_manual_confirmation(update, context)
+
+        try:
+            carbs = float(update.message.text.strip().replace(',', '.'))
+            if carbs < 0 or carbs > 1000:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введи число от 0 до 1000 грамм.\n"
+                "Например: <code>49</code>",
+                parse_mode="HTML"
+            )
+            return STATE_MANUAL_CARBS
+
+        context.user_data["manual_product"]["carbs"] = carbs
+        return await self._show_manual_confirmation(update, context)
+
+    async def _show_manual_confirmation(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Показывает экран подтверждения ручного ввода."""
+        product = context.user_data.get("manual_product", {})
+        
+        text = (
+            "✅ <b>Проверь данные</b>\n\n"
+            f"{format_manual_product_for_confirmation(product)}\n\n"
+            "Всё верно?"
+        )
+
+        target = update.callback_query.edit_message_text if update.callback_query else update.message.reply_text
+        await target(
+            text,
+            reply_markup=get_manual_confirm_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_MANUAL_CONFIRM
+
+    async def confirm_manual_input(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Подтверждает ручной ввод и сохраняет продукт."""
+        query = update.callback_query
+        await query.answer("✓ Сохраняю...")
+
+        product = context.user_data.get("manual_product", {})
+
+        # Формируем calculated_food для стандартного флоу
+        context.user_data["calculated_food"] = {
+            "name": product["name"],
+            "weight": product["weight"],
+            "kcal": product["kcal"],
+            "protein": product["protein"],
+            "fat": product["fat"],
+            "carbs": product["carbs"],
+        }
+
+        context.user_data["selected_product"] = {
+            "name": product["name"],
+            "code": None,  # Нет штрихкода
+        }
+
+        # Переходим к выбору типа приёма пищи
+        return await self._ask_meal_type(update, context)
+
+    async def edit_manual_input(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Возвращает к редактированию ручного ввода."""
+        query = update.callback_query
+        await query.answer()
+
+        # Начинаем сначала
+        return await self._start_manual_input(update, context)
+
+    # ================================================================
     # УМНЫЕ ВОЗВРАТЫ
     # ================================================================
 
@@ -994,7 +1320,7 @@ class AddFoodHandlers:
 
         for key in [
             "search_results", "search_page", "selected_product",
-            "calculated_food", "meal_type", "food_weight",
+            "calculated_food", "meal_type", "food_weight", "manual_product",
         ]:
             context.user_data.pop(key, None)
 
@@ -1005,6 +1331,8 @@ class AddFoodHandlers:
             return await self._start_voice_input(update, context)
         elif search_method == "popular":
             return await self._show_popular_foods(update, context)
+        elif search_method == "manual":
+            return await self._start_manual_input(update, context)
         elif search_method == "favorites":
             # 🎯 Если был в избранном — выходим во внешний модуль
             from handlers.favorites.handlers import FavoritesHandlers
@@ -1073,6 +1401,7 @@ class AddFoodHandlers:
             "search_results", "search_page", "selected_product",
             "calculated_food", "meal_type", "food_weight",
             "last_added_food", "food_search_query", "search_method",
+            "manual_product",
         ]:
             context.user_data.pop(key, None)
 
@@ -1205,6 +1534,39 @@ def get_add_food_conversation_handler(db: Database) -> ConversationHandler:
                 MessageHandler(filters.VOICE, h.process_voice_message),
                 MessageHandler(filters.AUDIO, h.process_voice_message),
                 CallbackQueryHandler(h._back_to_method, pattern=f"^{CALLBACK_BACK_TO_METHOD}$"),
+                CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
+            ],
+            # Ручной ввод
+            STATE_MANUAL_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_input),
+                CallbackQueryHandler(h._back_to_method, pattern=f"^{CALLBACK_BACK_TO_METHOD}$"),
+                CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
+            ],
+            STATE_MANUAL_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_name),
+            ],
+            STATE_MANUAL_WEIGHT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_weight),
+                CallbackQueryHandler(h.process_manual_weight, pattern=f"^{CALLBACK_MANUAL_SKIP}$"),
+            ],
+            STATE_MANUAL_KCAL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_kcal),
+            ],
+            STATE_MANUAL_PROTEIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_protein),
+                CallbackQueryHandler(h.process_manual_protein, pattern=f"^{CALLBACK_MANUAL_SKIP}$"),
+            ],
+            STATE_MANUAL_FAT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_fat),
+                CallbackQueryHandler(h.process_manual_fat, pattern=f"^{CALLBACK_MANUAL_SKIP}$"),
+            ],
+            STATE_MANUAL_CARBS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_manual_carbs),
+                CallbackQueryHandler(h.process_manual_carbs, pattern=f"^{CALLBACK_MANUAL_SKIP}$"),
+            ],
+            STATE_MANUAL_CONFIRM: [
+                CallbackQueryHandler(h.confirm_manual_input, pattern=f"^{CALLBACK_MANUAL_CONFIRM}$"),
+                CallbackQueryHandler(h.edit_manual_input, pattern=f"^{CALLBACK_MANUAL_EDIT}$"),
                 CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
             ],
         },

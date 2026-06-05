@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from .constants import (
     MEAL_TYPES, PAGE_SIZE,
     CALLBACK_METHOD_TEXT, CALLBACK_METHOD_BARCODE, CALLBACK_METHOD_FAVORITES,
-    CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE,
+    CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE, CALLBACK_METHOD_MANUAL,
     CALLBACK_BACK_TO_DIARY, CALLBACK_BACK_TO_METHOD, CALLBACK_BACK_TO_TEXT,
     CALLBACK_BACK_TO_RESULTS, CALLBACK_BACK_TO_WEIGHT,
     CALLBACK_SEARCH_AGAIN, CALLBACK_SELECT_PRODUCT,
@@ -14,7 +14,7 @@ from .constants import (
     CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
-    CALLBACK_NOOP,
+    CALLBACK_NOOP, CALLBACK_MANUAL_SKIP, CALLBACK_MANUAL_CONFIRM, CALLBACK_MANUAL_EDIT,
 )
 
 
@@ -26,6 +26,7 @@ def get_select_method_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📷 Сканировать штрихкод", callback_data=CALLBACK_METHOD_BARCODE)],
         [InlineKeyboardButton("⭐️ Избранное", callback_data=CALLBACK_METHOD_FAVORITES)],
         [InlineKeyboardButton("🔥 Популярные блюда", callback_data=CALLBACK_METHOD_POPULAR)],
+        [InlineKeyboardButton("➕ Ввести вручную", callback_data=CALLBACK_METHOD_MANUAL)],
         [InlineKeyboardButton("📔 ← В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
@@ -198,6 +199,31 @@ def get_voice_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
         [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
+    ])
+
+
+def get_manual_input_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для ручного ввода (шаблон)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
+        [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
+    ])
+
+
+def get_manual_skip_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой 'Пропустить' для поэтапного ввода."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Пропустить", callback_data=CALLBACK_MANUAL_SKIP)],
+        [InlineKeyboardButton("🔙 ← Назад", callback_data=CALLBACK_BACK_TO_METHOD)],
+    ])
+
+
+def get_manual_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения ручного ввода."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Всё верно", callback_data=CALLBACK_MANUAL_CONFIRM)],
+        [InlineKeyboardButton("✏️ Изменить", callback_data=CALLBACK_MANUAL_EDIT)],
+        [InlineKeyboardButton("📔 Отмена", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
 
