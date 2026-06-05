@@ -15,7 +15,7 @@ from telegram.error import BadRequest
 from db import Database, UserRepository, DailyMetricsRepository
 from .constants import *
 from .keyboards import *
-from .utils import format_metrics_summary, get_default_metrics
+from .utils import format_metrics_summary, get_default_metrics, get_session_type_by_hour
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +446,7 @@ class MetricsHandlers:
     ) -> int:
         """Обрабатывает выбор параметра для редактирования."""
         query = update.callback_query
+        logger.info(f"🔔 handle_edit_actions called with data: {query.data}")
         await query.answer()
 
         data = query.data
