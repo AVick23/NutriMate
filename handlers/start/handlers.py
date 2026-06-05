@@ -2,8 +2,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from db.database import Database
-from db.models import UserRepository, DailyStatsRepository
+from db import Database, UserRepository, DailyStatsRepository
 from handlers.registration.keyboards import get_start_registration_keyboard
 from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
 from handlers.water.utils import calculate_water_goal
@@ -77,10 +76,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>Основные действия:</b>\n\n"
         "• <b>🍽️ Еда</b> — добавь приём пищи: фото, штрихкод, текст или избранное.\n"
         "• <b>💧 Вода</b> — быстрый +1 стакан, счётчик обновится сразу.\n"
-        "• <b>⋯</b> — меню дополнительных действий: тренировки, вес, прогресс, избранное, история, настройки.\n\n"
+        "• <b>⋯</b> — меню дополнительных действий: тренировки, вес, прогресс, "
+        "избранное, история, настройки, <b>мои метрики</b>.\n\n"
         "<b>Лайфхаки:</b>\n"
         "• Просто пришли <b>фото еды</b> — я попробую распознать.\n"
         "• Напиши <b>текст</b> вида «омлет 200г» — я найду калорийность.\n"
+        "• Заполняй <b>метрики</b> (сон, энергию, стресс) — я буду давать "
+        "персональные советы по твоему метаболизму! 🧠"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -162,6 +164,7 @@ async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
         [InlineKeyboardButton("📜 История", callback_data="history_show")],
         [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],
+        [InlineKeyboardButton("📝 Мои метрики", callback_data="metrics_show")],  # НОВАЯ КНОПКА
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
         [InlineKeyboardButton("← Назад", callback_data="diary_show")],
     ])

@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.models import UserRepository, RegistrationStateRepository
+from db.repositories import UserRepository, RegistrationStateRepository
 from handlers.registration.utils import (
     Gender, ActivityLevel, Goal, Pace,
     STATE_AGE_HEIGHT_WEIGHT, STATE_ACTIVITY, STATE_GOAL, STATE_PACE, STATE_GENDER,

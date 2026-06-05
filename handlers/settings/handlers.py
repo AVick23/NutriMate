@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.models import UserRepository
+from db.repositories import UserRepository
 from handlers.registration.utils import (
     Gender, ActivityLevel, Goal, Pace,
     calculate_bmr, calculate_tdee, calculate_target_kcal, calculate_macros,

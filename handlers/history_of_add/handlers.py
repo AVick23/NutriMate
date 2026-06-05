@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 from db.database import Database
-from db.models import UserRepository, HistoryRepository
+from db.repositories import UserRepository, HistoryRepository
 from handlers.history_of_add.constants import (
     STATE_MAIN_MENU, STATE_CALENDAR,
     CALLBACK_BACK_TO_MENU,

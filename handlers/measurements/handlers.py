@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.models import UserRepository
+from db.repositories import UserRepository
 from .repository import MeasurementsRepository
 from .constants import (
     STATE_MAIN_MENU, STATE_CHOOSE_TYPE, STATE_ENTER_VALUE, STATE_HISTORY_TYPE,

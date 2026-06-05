@@ -18,7 +18,7 @@ from telegram.ext import (
 )
 
 from db.database import Database
-from db.models import (
+from db.repositories import (
     UserRepository, MealRepository,
     FavoritesRepository, DailyStatsRepository
 )

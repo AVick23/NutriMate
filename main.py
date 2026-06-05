@@ -4,7 +4,7 @@ import logging
 from telegram.ext import Application
 
 from config import config
-from db.database import Database
+from db import Database
 from handlers import register_all_handlers
 
 # Настройка логирования

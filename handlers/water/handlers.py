@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.models import UserRepository, WaterRepository, DailyStatsRepository
+from db.repositories import UserRepository, WaterRepository, DailyStatsRepository
 
 from .constants import STATE_SELECT_VOLUME, DEFAULT_WATER_ML
 from .utils import get_water_status_text, calculate_water_goal
