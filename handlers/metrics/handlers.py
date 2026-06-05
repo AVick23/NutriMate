@@ -14,7 +14,7 @@ from telegram.ext import (
 from db import Database, UserRepository, DailyMetricsRepository
 from .constants import *
 from .keyboards import *
-from .utils import format_metrics_summary, get_default_metrics, get_session_prompt, get_session_type_by_hour
+from .utils import format_metrics_summary, get_default_metrics, get_session_type_by_hour
 
 logger = logging.getLogger(__name__)
 
