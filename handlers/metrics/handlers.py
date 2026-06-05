@@ -124,7 +124,7 @@ class MetricsHandlers:
             return await self._back_to_diary(update, context)
 
         if data == CALLBACK_METRICS_TODAY:
-            # Начинаем заполнение за сегодня
+            # Начинаем полное заполнение за сегодня
             self._clear_metrics(context)
             return await self._start_sleep_input(update, context)
 
@@ -152,7 +152,7 @@ class MetricsHandlers:
         return STATE_MAIN_MENU
 
     # ================================================================
-    # ОБРАБОТКА РЕДАКТИРОВАНИЯ (НОВЫЕ МЕТОДЫ)
+    # ОБРАБОТКА РЕДАКТИРОВАНИЯ
     # ================================================================
 
     async def handle_edit_actions(
@@ -229,7 +229,29 @@ class MetricsHandlers:
         return STATE_WORKOUT_TYPE
 
     # ================================================================
-    # ПОШАГОВЫЙ СБОР МЕТРИК
+    # ОБРАБОТКА КНОПОК НАЗАД
+    # ================================================================
+
+    async def back_to_main_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Возврат в главное меню метрик."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+        return await self.show_metrics_menu(update, context)
+
+    async def back_to_edit_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Возврат в меню редактирования."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+        return await self._show_edit_menu(update, context)
+
+    # ================================================================
+    # ПОШАГОВЫЙ СБОР МЕТРИК (ПОЛНЫЙ)
     # ================================================================
 
     async def _start_sleep_input(
@@ -385,7 +407,7 @@ class MetricsHandlers:
     async def process_energy_morning(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку энергии утром."""
+        """Обрабатывает оценку энергии утром и ПРОДОЛЖАЕТ опрос."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
@@ -394,13 +416,8 @@ class MetricsHandlers:
             if data.startswith("energy_morning_"):
                 value = int(data.replace("energy_morning_", ""))
                 self._update_metric(context, "energy_morning", value)
-
-                # Если вечерняя сессия — спрашиваем стресс, иначе — завершаем
-                session_type = get_session_type_by_hour()
-                if session_type == "evening":
-                    return await self._ask_stress(update, context)
-                else:
-                    return await self._show_confirm(update, context)
+                # ВСЕГДА продолжаем опрос после энергии утром
+                return await self._ask_energy_evening(update, context)
 
         return STATE_ENERGY_MORNING
 
@@ -412,7 +429,7 @@ class MetricsHandlers:
         if query:
             await query.answer()
 
-        text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя сейчас?</b>\n\nОцени энергию от 1 до 10:"
+        text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя вечером?</b>\n\nОцени энергию от 1 до 10:"
 
         if query:
             await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_evening"))
@@ -427,7 +444,7 @@ class MetricsHandlers:
     async def process_energy_evening(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку энергии вечером."""
+        """Обрабатывает оценку энергии вечером и продолжает опрос."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
@@ -463,7 +480,7 @@ class MetricsHandlers:
     async def process_stress(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку стресса."""
+        """Обрабатывает оценку стресса и продолжает опрос."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
@@ -847,48 +864,73 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
             STATE_MAIN_MENU: [
                 CallbackQueryHandler(h.handle_main_menu, pattern="^metrics_"),
                 CallbackQueryHandler(h.handle_edit_actions, pattern="^(edit_|metrics_back_to_menu|metrics_confirm_all)"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern="^(sleep_|sleep_custom)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_sleep_hours),
             ],
             STATE_SLEEP_QUALITY: [
                 CallbackQueryHandler(h.process_sleep_quality, pattern="^quality_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_SLEEP_AWAKENINGS: [
                 CallbackQueryHandler(h.process_sleep_awakenings, pattern="^awakenings_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_ENERGY_MORNING: [
                 CallbackQueryHandler(h.process_energy_morning, pattern="^energy_morning_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_ENERGY_EVENING: [
                 CallbackQueryHandler(h.process_energy_evening, pattern="^energy_evening_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_STRESS: [
                 CallbackQueryHandler(h.process_stress, pattern="^stress_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_STEPS: [
                 CallbackQueryHandler(h.process_steps, pattern="^(steps_|steps_custom)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_steps),
             ],
             STATE_HOURS_ON_FEET: [
                 CallbackQueryHandler(h.process_hours_on_feet, pattern="^(feet_|feet_custom)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_hours_on_feet),
             ],
             STATE_WORKOUT_TYPE: [
                 CallbackQueryHandler(h.process_workout_type, pattern="^workout_type_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_WORKOUT_DURATION: [
                 CallbackQueryHandler(h.process_workout_duration, pattern="^(workout_duration_|duration_custom)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_workout_duration),
             ],
             STATE_WORKOUT_INTENSITY: [
                 CallbackQueryHandler(h.process_workout_intensity, pattern="^intensity_"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
             STATE_CONFIRM: [
                 CallbackQueryHandler(h.confirm_and_save, pattern=f"^{CALLBACK_CONFIRM_ALL}$"),
                 CallbackQueryHandler(h._show_edit_menu, pattern=f"^{CALLBACK_METRICS_EDIT}$"),
                 CallbackQueryHandler(h.cancel, pattern=f"^{CALLBACK_METRICS_BACK_TO_DIARY}$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
             ],
         },
         fallbacks=[
