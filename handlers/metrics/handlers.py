@@ -15,7 +15,7 @@ from telegram.error import BadRequest
 from db import Database, UserRepository, DailyMetricsRepository
 from .constants import *
 from .keyboards import *
-from .utils import format_metrics_summary, get_default_metrics, get_session_type_by_hour
+from .utils import format_metrics_summary, get_default_metrics, split_long_message
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,15 @@ class MetricsHandlers:
     def _clear_metrics(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Очищает все метрики."""
         context.user_data.pop("metrics_data", None)
+        context.user_data.pop("session_mode", None)
+
+    def _set_session_mode(self, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
+        """Устанавливает режим сессии (full/edit)."""
+        context.user_data["session_mode"] = mode
+
+    def _is_edit_mode(self, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Проверяет, в режиме ли редактирования."""
+        return context.user_data.get("session_mode") == SESSION_EDIT
 
     async def _safe_edit_message(self, query, text: str, reply_markup=None) -> bool:
         """Безопасно редактирует сообщение, игнорируя ошибку 'Message is not modified'."""
@@ -66,7 +75,18 @@ class MetricsHandlers:
                 return False
             raise e
         except Exception as e:
-            raise e
+            logger.error(f"Error editing message: {e}")
+            return False
+
+    async def _send_error_message(self, update: Update, text: str) -> None:
+        """Отправляет сообщение об ошибке."""
+        try:
+            if update.callback_query:
+                await update.callback_query.answer(text, show_alert=True)
+            else:
+                await update.message.reply_text(text, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
 
     def _state_name(self, state_type: str) -> str:
         """Возвращает человекочитаемое название состояния."""
@@ -107,9 +127,8 @@ class MetricsHandlers:
             "Здесь я собираю данные о твоём состоянии:\n"
             "• Сон, энергия, стресс\n"
             "• Шаги и активность\n"
-            "• Тренировки\n"
-            "• Голод, пищеварение, цикл\n\n"
-            "Чем больше данных — тем точнее мои рекомендации по питанию и образу жизни! 🧠"
+            "• Тренировки\n\n"
+            "Чем больше данных — тем точнее мои рекомендации! 🧠"
         )
 
         if query:
@@ -135,17 +154,17 @@ class MetricsHandlers:
             return await self._back_to_diary(update, context)
 
         if data == CALLBACK_METRICS_TODAY:
-            # Начинаем полное заполнение за сегодня
             self._clear_metrics(context)
+            self._set_session_mode(context, SESSION_FULL)
             return await self._start_sleep_input(update, context)
 
         if data == CALLBACK_METRICS_EDIT:
-            # Показываем уже сохранённые метрики для редактирования
             today = date.today()
             user_id = await self.user_repo.get_user_id(update.effective_user.id)
             existing = await self.metrics_repo.get_metrics(user_id, today)
             if existing:
                 self._save_today_metrics(context, dict(existing))
+                self._set_session_mode(context, SESSION_EDIT)
                 return await self._show_edit_menu(update, context)
             else:
                 await query.answer("Нет сохранённых метрик за сегодня", show_alert=True)
@@ -225,34 +244,43 @@ class MetricsHandlers:
         
         yesterday = date.today() - timedelta(days=1)
         
-        # Получаем агрегированные данные за вчера
-        from analytics import DailyAggregator, ModifierEngine, InsightGenerator
-        
-        aggregator = DailyAggregator(self.db)
-        modifier_engine = ModifierEngine(self.db)
-        insight_gen = InsightGenerator()
-        
-        # Агрегируем данные
-        aggregated = await aggregator.aggregate(user_id, yesterday)
-        
-        # Получаем профиль пользователя для расчёта TDEE
-        profile = await self.user_repo.get_profile(user_id)
-        base_tdee = profile["daily_kcal"] if profile else 2000
-        
-        # Рассчитываем скорректированный TDEE
-        adjusted_tdee, modifiers, confidence = await modifier_engine.calculate_adjusted_tdee(
-            user_id, base_tdee, aggregated
-        )
-        
-        # Получаем инсайты
-        insights = insight_gen.generate_insights(aggregated)
+        try:
+            from analytics import DailyAggregator, ModifierEngine, InsightGenerator
+            
+            aggregator = DailyAggregator(self.db)
+            modifier_engine = ModifierEngine(self.db)
+            insight_gen = InsightGenerator()
+            
+            # Агрегируем данные
+            aggregated = await aggregator.aggregate(user_id, yesterday)
+            
+            # Получаем профиль пользователя для расчёта TDEE
+            profile = await self.user_repo.get_profile(user_id)
+            base_tdee = profile["daily_kcal"] if profile else 2000
+            
+            # Рассчитываем скорректированный TDEE
+            adjusted_tdee, modifiers, confidence = await modifier_engine.calculate_adjusted_tdee(
+                user_id, base_tdee, aggregated
+            )
+            
+            # Получаем инсайты
+            insights = insight_gen.generate_insights(aggregated)
+            
+        except Exception as e:
+            logger.error(f"Analytics error: {e}", exc_info=True)
+            await self._safe_edit_message(
+                query,
+                "⚠️ Произошла ошибка при расчёте аналитики. Попробуйте позже.",
+                get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
+            )
+            return STATE_ANALYTICS
         
         # Формируем текст аналитики
         text = f"📅 <b>Аналитика за {yesterday.strftime('%d.%m.%Y')}</b>\n\n"
         
         # Основные показатели
-        text += "━" * 25 + "\n"
-        text += "📊 <b>Основные показатели:</b>\n"
+        text += "─────────────────\n"
+        text += "📊 <b>Основные показатели</b>\n"
         text += f"🔥 Калории: {aggregated.nutrition.total_kcal} ккал\n"
         if aggregated.nutrition.total_protein_g:
             text += f"🍗 Белок: {aggregated.nutrition.total_protein_g:.0f} г\n"
@@ -272,8 +300,8 @@ class MetricsHandlers:
         if aggregated.derived.eating_window_hours:
             text += f"⏰ Окно питания: {aggregated.derived.eating_window_hours:.0f} ч\n"
         
-        text += "\n━" * 25 + "\n"
-        text += "⚡ <b>Метаболизм (TDEE):</b>\n"
+        text += "\n─────────────────\n"
+        text += "⚡ <b>Метаболизм (TDEE)</b>\n"
         text += f"📊 Базовый: {base_tdee} ккал\n"
         text += f"🎯 Скорректированный: {adjusted_tdee} ккал\n"
         
@@ -282,21 +310,25 @@ class MetricsHandlers:
         
         # Инсайты
         if insights:
-            text += "\n━" * 25 + "\n"
-            text += "💡 <b>Персональные инсайты:</b>\n"
+            text += "\n─────────────────\n"
+            text += "💡 <b>Персональные инсайты</b>\n"
             for insight in insights[:3]:
-                text += f"{insight.emoji} <b>{insight.title}</b>\n"
-                text += f"   {insight.message[:80]}...\n\n"
+                text += f"\n{insight.emoji} <b>{insight.title}</b>\n"
+                text += f"   {insight.message[:100]}"
+                if len(insight.message) > 100:
+                    text += "..."
+                text += "\n"
         
         # Если мало данных
         if aggregated.sleep.hours is None and aggregated.stress is None:
-            text += "\n📝 <i>Заполни больше метрик (сон, стресс, шаги),\n"
-            text += "чтобы я мог давать более точные рекомендации!</i>\n"
+            text += "\n─────────────────\n"
+            text += "📝 <i>Заполни больше метрик (сон, стресс, шаги),</i>\n"
+            text += "<i>чтобы я мог давать более точные рекомендации!</i>\n"
         
-        text += "\n━" * 25 + "\n"
+        text += "\n─────────────────\n"
         text += "📊 <a href='https://t.me/nutrimate'>#NutriMate</a>"
         
-        await self._safe_edit_message(query, text, get_back_keyboard("metrics_analytics"))
+        await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         return STATE_ANALYTICS
 
     async def _show_weekly_analytics(
@@ -305,16 +337,27 @@ class MetricsHandlers:
         """Показывает недельную аналитику."""
         query = update.callback_query
         
-        from analytics import WeeklyReportGenerator
+        try:
+            from analytics import WeeklyReportGenerator
+            
+            profile = await self.user_repo.get_profile(user_id)
+            report_gen = WeeklyReportGenerator(self.db)
+            report = await report_gen.generate_report(user_id, profile)
+            
+        except Exception as e:
+            logger.error(f"Weekly analytics error: {e}", exc_info=True)
+            await self._safe_edit_message(
+                query,
+                "⚠️ Произошла ошибка при формировании отчёта. Попробуйте позже.",
+                get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
+            )
+            return STATE_ANALYTICS
         
-        # Получаем профиль пользователя
-        profile = await self.user_repo.get_profile(user_id)
+        # Заменяем длинные линии на короткие
+        report = report.replace("━" * 30, "─────────────────")
+        report = report.replace("━" * 25, "─────────────────")
         
-        # Генерируем недельный отчёт
-        report_gen = WeeklyReportGenerator(self.db)
-        report = await report_gen.generate_report(user_id, profile)
-        
-        await self._safe_edit_message(query, report, get_back_keyboard("metrics_analytics"))
+        await self._safe_edit_message(query, report, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         return STATE_ANALYTICS
 
     async def _show_trends_analytics(
@@ -323,30 +366,39 @@ class MetricsHandlers:
         """Показывает тренды и прогресс за последние 30 дней."""
         query = update.callback_query
         
-        from analytics import DailyAggregator, StateDetector
-        
-        aggregator = DailyAggregator(self.db)
-        state_detector = StateDetector()
-        
-        # Получаем данные за последние 30 дней
-        end_date = date.today() - timedelta(days=1)
-        start_date = end_date - timedelta(days=30)
-        
-        aggregates = []
-        for i in range(31):
-            current_date = start_date + timedelta(days=i)
-            if current_date <= end_date:
-                agg = await aggregator.aggregate(user_id, current_date)
-                aggregates.append(agg)
-        
-        # Получаем профиль
-        profile = await self.user_repo.get_profile(user_id)
-        
-        # Детектируем состояния
-        states = state_detector.detect_states(aggregates, profile)
+        try:
+            from analytics import DailyAggregator, StateDetector
+            
+            aggregator = DailyAggregator(self.db)
+            state_detector = StateDetector()
+            
+            end_date = date.today() - timedelta(days=1)
+            start_date = end_date - timedelta(days=30)
+            
+            aggregates = []
+            for i in range(31):
+                current_date = start_date + timedelta(days=i)
+                if current_date <= end_date:
+                    agg = await aggregator.aggregate(user_id, current_date)
+                    aggregates.append(agg)
+            
+            profile = await self.user_repo.get_profile(user_id)
+            states = state_detector.detect_states(aggregates, profile)
+            
+        except Exception as e:
+            logger.error(f"Trends analytics error: {e}", exc_info=True)
+            await self._safe_edit_message(
+                query,
+                "⚠️ Произошла ошибка при расчёте трендов. Попробуйте позже.",
+                get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
+            )
+            return STATE_ANALYTICS
         
         # Формируем текст
         text = "📈 <b>Тренды за 30 дней</b>\n\n"
+        
+        text += "─────────────────\n"
+        text += "📊 <b>Динамика измерений</b>\n"
         
         # Вес
         weights = [agg.measurements.weight_kg for agg in aggregates if agg.measurements.weight_kg]
@@ -366,35 +418,45 @@ class MetricsHandlers:
             direction = "📉" if change < 0 else "📈" if change > 0 else "➡️"
             text += f"📏 Талия: {first_waist:.1f} → {last_waist:.1f} см ({direction} {abs(change):.1f} см)\n"
         
-        # Средний сон
+        # Средние значения
+        text += "\n─────────────────\n"
+        text += "📊 <b>Средние значения</b>\n"
+        
         sleep_hours = [agg.sleep.hours for agg in aggregates if agg.sleep.hours]
         if sleep_hours:
             avg_sleep = sum(sleep_hours) / len(sleep_hours)
-            text += f"😴 Средний сон: {avg_sleep:.1f} ч/день\n"
+            text += f"😴 Сон: {avg_sleep:.1f} ч/день\n"
         
-        # Средние шаги
         steps = [agg.activity.steps for agg in aggregates if agg.activity.steps]
         if steps:
             avg_steps = sum(steps) / len(steps)
-            text += f"👣 Средние шаги: {avg_steps:.0f} шагов/день\n"
+            text += f"👣 Шаги: {avg_steps:.0f} шагов/день\n"
+        
+        kcals = [agg.nutrition.total_kcal for agg in aggregates if agg.nutrition.total_kcal > 0]
+        if kcals:
+            avg_kcal = sum(kcals) / len(kcals)
+            text += f"🔥 Калории: {avg_kcal:.0f} ккал/день\n"
         
         # Обнаруженные состояния
         active_states = [s for s in states if s.detected]
         if active_states:
-            text += "\n━" * 25 + "\n"
-            text += "🔍 <b>Обнаруженные состояния:</b>\n"
+            text += "\n─────────────────\n"
+            text += "🔍 <b>Обнаруженные состояния</b>\n"
             for state in active_states[:3]:
-                text += f"{state.emoji} <b>{self._state_name(state.state_type)}</b>\n"
-                text += f"   {state.recommendation[:100]}...\n\n"
+                text += f"\n{state.emoji} <b>{self._state_name(state.state_type)}</b>\n"
+                text += f"   {state.recommendation[:100]}"
+                if len(state.recommendation) > 100:
+                    text += "..."
+                text += "\n"
         
-        # Если мало данных
         if len(aggregates) < 14:
-            text += "\n📝 <i>Заполняй метрики чаще для более точного анализа трендов!</i>\n"
+            text += "\n─────────────────\n"
+            text += "📝 <i>Заполняй метрики чаще для более точного анализа трендов!</i>\n"
         
-        text += "\n━" * 25 + "\n"
+        text += "\n─────────────────\n"
         text += "📊 <a href='https://t.me/nutrimate'>#NutriMate</a>"
         
-        await self._safe_edit_message(query, text, get_back_keyboard("metrics_analytics"))
+        await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         return STATE_ANALYTICS
 
     # ================================================================
@@ -443,21 +505,21 @@ class MetricsHandlers:
         """Редактирование энергии утром."""
         query = update.callback_query
         text = f"{EMOJI_ENERGY} <b>Редактирование энергии утром</b>\n\nОцени энергию от 1 до 10:"
-        await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_morning"))
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_energy_morning"))
         return STATE_ENERGY_MORNING
 
     async def _edit_energy_evening(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Редактирование энергии вечером."""
         query = update.callback_query
         text = f"{EMOJI_ENERGY} <b>Редактирование энергии вечером</b>\n\nОцени энергию от 1 до 10:"
-        await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_evening"))
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_energy_evening"))
         return STATE_ENERGY_EVENING
 
     async def _edit_stress(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Редактирование стресса."""
         query = update.callback_query
         text = f"{EMOJI_STRESS} <b>Редактирование стресса</b>\n\nОцени уровень стресса от 1 до 10:"
-        await self._safe_edit_message(query, text, get_energy_stress_keyboard("stress"))
+        await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_stress"))
         return STATE_STRESS
 
     async def _edit_steps(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -540,9 +602,13 @@ class MetricsHandlers:
                 return STATE_SLEEP_HOURS
 
             if data.startswith("sleep_"):
-                hours = float(data.replace("sleep_", ""))
-                self._update_metric(context, "sleep_hours", hours)
-                return await self._ask_sleep_quality(update, context)
+                try:
+                    hours = float(data.replace("sleep_", ""))
+                    self._update_metric(context, "sleep_hours", hours)
+                    return await self._ask_sleep_quality(update, context)
+                except ValueError:
+                    await self._send_error_message(update, "❌ Ошибка: неверное значение.")
+                    return STATE_SLEEP_HOURS
 
         elif update.message:
             try:
@@ -638,14 +704,15 @@ class MetricsHandlers:
         if query:
             await query.answer()
 
+        prefix = "edit_energy_morning" if self._is_edit_mode(context) else "energy_morning"
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя сейчас?</b>\n\nОцени энергию от 1 до 10:"
 
         if query:
-            await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_morning"))
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(
                 text,
-                reply_markup=get_energy_stress_keyboard("energy_morning"),
+                reply_markup=get_energy_stress_keyboard(prefix),
                 parse_mode="HTML"
             )
         return STATE_ENERGY_MORNING
@@ -653,16 +720,23 @@ class MetricsHandlers:
     async def process_energy_morning(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку энергии утром и ПРОДОЛЖАЕТ опрос."""
+        """Обрабатывает оценку энергии утром."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
 
-            if data.startswith("energy_morning_"):
+            if data.startswith("edit_energy_morning_"):
+                value = int(data.replace("edit_energy_morning_", ""))
+                self._update_metric(context, "energy_morning", value)
+                # Режим редактирования — возвращаемся в меню
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
+                return await self._ask_energy_evening(update, context)
+
+            elif data.startswith("energy_morning_"):
                 value = int(data.replace("energy_morning_", ""))
                 self._update_metric(context, "energy_morning", value)
-                # ВСЕГДА продолжаем опрос после энергии утром
                 return await self._ask_energy_evening(update, context)
 
         return STATE_ENERGY_MORNING
@@ -675,14 +749,15 @@ class MetricsHandlers:
         if query:
             await query.answer()
 
+        prefix = "edit_energy_evening" if self._is_edit_mode(context) else "energy_evening"
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя вечером?</b>\n\nОцени энергию от 1 до 10:"
 
         if query:
-            await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_evening"))
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(
                 text,
-                reply_markup=get_energy_stress_keyboard("energy_evening"),
+                reply_markup=get_energy_stress_keyboard(prefix),
                 parse_mode="HTML"
             )
         return STATE_ENERGY_EVENING
@@ -690,13 +765,20 @@ class MetricsHandlers:
     async def process_energy_evening(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку энергии вечером и продолжает опрос."""
+        """Обрабатывает оценку энергии вечером."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
 
-            if data.startswith("energy_evening_"):
+            if data.startswith("edit_energy_evening_"):
+                value = int(data.replace("edit_energy_evening_", ""))
+                self._update_metric(context, "energy_evening", value)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
+                return await self._ask_stress(update, context)
+
+            elif data.startswith("energy_evening_"):
                 value = int(data.replace("energy_evening_", ""))
                 self._update_metric(context, "energy_evening", value)
                 return await self._ask_stress(update, context)
@@ -711,14 +793,15 @@ class MetricsHandlers:
         if query:
             await query.answer()
 
+        prefix = "edit_stress" if self._is_edit_mode(context) else "stress"
         text = f"{EMOJI_STRESS} <b>Оцени уровень стресса за сегодня</b> (1 — спокоен, 10 — очень напряжён):"
 
         if query:
-            await self._safe_edit_message(query, text, get_energy_stress_keyboard("stress"))
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(
                 text,
-                reply_markup=get_energy_stress_keyboard("stress"),
+                reply_markup=get_energy_stress_keyboard(prefix),
                 parse_mode="HTML"
             )
         return STATE_STRESS
@@ -726,13 +809,20 @@ class MetricsHandlers:
     async def process_stress(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
-        """Обрабатывает оценку стресса и продолжает опрос."""
+        """Обрабатывает оценку стресса."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
 
-            if data.startswith("stress_"):
+            if data.startswith("edit_stress_"):
+                value = int(data.replace("edit_stress_", ""))
+                self._update_metric(context, "stress_level", value)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
+                return await self._ask_steps(update, context)
+
+            elif data.startswith("stress_"):
                 value = int(data.replace("stress_", ""))
                 self._update_metric(context, "stress_level", value)
                 return await self._ask_steps(update, context)
@@ -778,6 +868,8 @@ class MetricsHandlers:
             if data.startswith("steps_"):
                 steps = int(data.replace("steps_", ""))
                 self._update_metric(context, "steps", steps)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
                 return await self._ask_hours_on_feet(update, context)
 
         elif update.message:
@@ -786,6 +878,8 @@ class MetricsHandlers:
                 if steps < 0 or steps > 50000:
                     raise ValueError
                 self._update_metric(context, "steps", steps)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
                 return await self._ask_hours_on_feet(update, context)
             except ValueError:
                 await update.message.reply_text(
@@ -835,6 +929,8 @@ class MetricsHandlers:
             if data.startswith("feet_"):
                 hours = float(data.replace("feet_", ""))
                 self._update_metric(context, "hours_on_feet", hours)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
                 return await self._ask_workout_type(update, context)
 
         elif update.message:
@@ -843,6 +939,8 @@ class MetricsHandlers:
                 if hours < 0 or hours > 24:
                     raise ValueError
                 self._update_metric(context, "hours_on_feet", hours)
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
                 return await self._ask_workout_type(update, context)
             except ValueError:
                 await update.message.reply_text(
@@ -886,7 +984,8 @@ class MetricsHandlers:
             self._update_metric(context, "workout_type", workout_type)
 
             if workout_type == "none":
-                # Нет тренировки — переходим к подтверждению
+                if self._is_edit_mode(context):
+                    return await self._show_edit_menu(update, context)
                 return await self._show_confirm(update, context)
             else:
                 return await self._ask_workout_duration(update, context)
@@ -981,6 +1080,8 @@ class MetricsHandlers:
         if data.startswith("intensity_"):
             intensity = int(data.replace("intensity_", ""))
             self._update_metric(context, "workout_intensity", intensity)
+            if self._is_edit_mode(context):
+                return await self._show_edit_menu(update, context)
             return await self._show_confirm(update, context)
 
         return STATE_WORKOUT_INTENSITY
@@ -1050,14 +1151,17 @@ class MetricsHandlers:
         user_id = await self.user_repo.get_user_id(user.id)
         metrics = self._get_today_metrics(context)
 
-        # Сохраняем в БД
-        today = date.today()
-        await self.metrics_repo.save_metrics(user_id, today, metrics)
+        try:
+            today = date.today()
+            await self.metrics_repo.save_metrics(user_id, today, metrics)
+            logger.info(f"Metrics saved for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to save metrics: {e}", exc_info=True)
+            await self._send_error_message(update, "⚠️ Ошибка при сохранении метрик. Попробуйте позже.")
+            return await self._back_to_diary(update, context)
 
-        # Очищаем временные данные
         self._clear_metrics(context)
 
-        # Показываем дневник
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
 
@@ -1104,87 +1208,88 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
 
     return ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(h.show_metrics_menu, pattern="^metrics_show$"),
+            CallbackQueryHandler(h.show_metrics_menu, pattern=f"^{CALLBACK_METRICS_SHOW}$"),
         ],
         states={
             STATE_MAIN_MENU: [
-                CallbackQueryHandler(h.handle_main_menu, pattern="^metrics_"),
-                CallbackQueryHandler(h.handle_edit_actions, pattern="^(edit_|metrics_back_to_menu|metrics_confirm_all)"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.handle_main_menu, pattern=f"^({CALLBACK_METRICS_TODAY}|{CALLBACK_METRICS_EDIT}|{CALLBACK_METRICS_ANALYTICS}|{CALLBACK_METRICS_HISTORY}|{CALLBACK_METRICS_BACK_TO_DIARY})$"),
+                CallbackQueryHandler(h.handle_edit_actions, pattern=f"^(edit_|{CALLBACK_METRICS_BACK_TO_MENU}|{CALLBACK_CONFIRM_ALL})$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_ANALYTICS: [
-                CallbackQueryHandler(h.handle_analytics, pattern="^(analytics_|metrics_back_to_menu)"),
+                CallbackQueryHandler(h.handle_analytics, pattern=f"^({CALLBACK_ANALYTICS_DAILY}|{CALLBACK_ANALYTICS_WEEKLY}|{CALLBACK_ANALYTICS_TRENDS}|{CALLBACK_METRICS_BACK_TO_MENU})$"),
             ],
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern="^(sleep_|sleep_custom)"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_sleep_hours),
             ],
             STATE_SLEEP_QUALITY: [
                 CallbackQueryHandler(h.process_sleep_quality, pattern="^quality_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_SLEEP_AWAKENINGS: [
                 CallbackQueryHandler(h.process_sleep_awakenings, pattern="^awakenings_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_ENERGY_MORNING: [
-                CallbackQueryHandler(h.process_energy_morning, pattern="^energy_morning_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.process_energy_morning, pattern="^(energy_morning_|edit_energy_morning_)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_ENERGY_EVENING: [
-                CallbackQueryHandler(h.process_energy_evening, pattern="^energy_evening_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.process_energy_evening, pattern="^(energy_evening_|edit_energy_evening_)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_STRESS: [
-                CallbackQueryHandler(h.process_stress, pattern="^stress_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.process_stress, pattern="^(stress_|edit_stress_)"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_STEPS: [
                 CallbackQueryHandler(h.process_steps, pattern="^(steps_|steps_custom)"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_steps),
             ],
             STATE_HOURS_ON_FEET: [
                 CallbackQueryHandler(h.process_hours_on_feet, pattern="^(feet_|feet_custom)"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_hours_on_feet),
             ],
             STATE_WORKOUT_TYPE: [
                 CallbackQueryHandler(h.process_workout_type, pattern="^workout_type_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_WORKOUT_DURATION: [
                 CallbackQueryHandler(h.process_workout_duration, pattern="^(workout_duration_|duration_custom)"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_workout_duration),
             ],
             STATE_WORKOUT_INTENSITY: [
                 CallbackQueryHandler(h.process_workout_intensity, pattern="^intensity_"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
             STATE_CONFIRM: [
                 CallbackQueryHandler(h.confirm_and_save, pattern=f"^{CALLBACK_CONFIRM_ALL}$"),
                 CallbackQueryHandler(h._show_edit_menu, pattern=f"^{CALLBACK_METRICS_EDIT}$"),
                 CallbackQueryHandler(h.cancel, pattern=f"^{CALLBACK_METRICS_BACK_TO_DIARY}$"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern="^back_to_edit$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+                CallbackQueryHandler(h.back_to_edit_menu, pattern=f"^{CALLBACK_BACK_TO_EDIT}$"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=f"^{CALLBACK_BACK_TO_MAIN}$"),
             ],
         },
         fallbacks=[
             CallbackQueryHandler(h.cancel, pattern=f"^{CALLBACK_CANCEL}$"),
             CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_METRICS_BACK_TO_DIARY}$"),
+            MessageHandler(filters.COMMAND, h.cancel),
         ],
         allow_reentry=True,
         per_chat=True,

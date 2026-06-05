@@ -25,17 +25,23 @@
 ) = range(18)
 
 # ============ Типы сессий ============
-SESSION_MORNING = "morning"   # Утренний опрос (сон, энергия утром)
-SESSION_EVENING = "evening"   # Вечерний опрос (энергия вечером, стресс, шаги, тренировки)
+SESSION_MORNING = "morning"
+SESSION_EVENING = "evening"
+SESSION_FULL = "full"          # Полный опрос (заполнить за сегодня)
+SESSION_EDIT = "edit"          # Режим редактирования
 
 # ============ Callback для главного меню ============
 CALLBACK_METRICS_SHOW = "metrics_show"
 CALLBACK_METRICS_TODAY = "metrics_today"
 CALLBACK_METRICS_EDIT = "metrics_edit"
 CALLBACK_METRICS_HISTORY = "metrics_history"
-CALLBACK_METRICS_ANALYTICS = "metrics_analytics"  # НОВЫЙ
+CALLBACK_METRICS_ANALYTICS = "metrics_analytics"
 CALLBACK_METRICS_BACK_TO_DIARY = "metrics_back_to_diary"
 CALLBACK_METRICS_BACK_TO_MENU = "metrics_back_to_menu"
+
+# ============ Callback для навигации ============
+CALLBACK_BACK_TO_EDIT = "back_to_edit"
+CALLBACK_BACK_TO_MAIN = "back_to_main"
 
 # ============ Callback для выбора действия ============
 CALLBACK_SLEEP = "metrics_sleep"

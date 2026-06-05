@@ -1,8 +1,11 @@
 """
 Утилиты для модуля сбора метрик.
 """
+import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, date
+
+logger = logging.getLogger(__name__)
 
 
 def format_metrics_summary(metrics: Dict[str, Any]) -> str:
@@ -69,7 +72,8 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
         }
         type_text = type_names.get(workout_type, workout_type)
         intensity_text = f" ({workout_intensity}/10)" if workout_intensity else ""
-        lines.append(f"💪 Тренировка: {type_text}, {workout_duration}мин{intensity_text}")
+        duration_text = f", {workout_duration}мин" if workout_duration else ""
+        lines.append(f"💪 Тренировка: {type_text}{duration_text}{intensity_text}")
     else:
         lines.append("💪 Тренировка: ❌ не было или не заполнено")
     
@@ -77,7 +81,9 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
     hunger_before = metrics.get("hunger_before")
     hunger_after = metrics.get("hunger_after")
     if hunger_before is not None or hunger_after is not None:
-        lines.append(f"🍽️ Голод: до={hunger_before}/10, после={hunger_after}/10")
+        before_text = f"{hunger_before}/10" if hunger_before is not None else "❌"
+        after_text = f"{hunger_after}/10" if hunger_after is not None else "❌"
+        lines.append(f"🍽️ Голод: до={before_text}, после={after_text}")
     
     # Пищеварение
     digestion = metrics.get("digestion_bristol")
@@ -118,7 +124,7 @@ def get_default_metrics() -> Dict[str, Any]:
     }
 
 
-def get_session_type_by_hour() -> str:
+def get_session_type_by_hour() -> Optional[str]:
     """
     Определяет, утренняя или вечерняя сейчас сессия.
     Утро: 5:00 - 12:00
@@ -133,19 +139,27 @@ def get_session_type_by_hour() -> str:
     return None
 
 
-def get_session_prompt(session_type: str) -> str:
-    """Возвращает приветственное сообщение для сессии."""
-    if session_type == "morning":
-        return (
-            "☀️ <b>Доброе утро!</b>\n\n"
-            "Давай оценим, как ты спал и как себя чувствуешь.\n"
-            "Это поможет мне лучше понимать твой метаболизм и давать точные советы.\n\n"
-            "Начнём?"
-        )
-    else:
-        return (
-            "🌙 <b>Добрый вечер!</b>\n\n"
-            "Давай подведём итоги дня — это займёт всего минуту.\n"
-            "Расскажи, как прошёл день, и я дам персональные рекомендации.\n\n"
-            "Начнём?"
-        )
+def split_long_message(text: str, max_length: int = 4000) -> list:
+    """
+    Разбивает длинное сообщение на части для отправки.
+    """
+    if len(text) <= max_length:
+        return [text]
+    
+    parts = []
+    current_part = ""
+    
+    for line in text.split("\n"):
+        if len(current_part) + len(line) + 1 > max_length:
+            parts.append(current_part)
+            current_part = line
+        else:
+            if current_part:
+                current_part += "\n" + line
+            else:
+                current_part = line
+    
+    if current_part:
+        parts.append(current_part)
+    
+    return parts
