@@ -2,7 +2,7 @@
 Обработчики для сбора ежедневных метрик.
 """
 import logging
-from datetime import date, datetime
+from datetime import date
 from typing import Optional, Dict, Any
 
 from telegram import Update
@@ -49,6 +49,22 @@ class MetricsHandlers:
         """Очищает все метрики."""
         context.user_data.pop("metrics_data", None)
 
+    async def _safe_edit_message(self, query, text: str, reply_markup=None) -> bool:
+        """Безопасно редактирует сообщение, игнорируя ошибку 'Message is not modified'."""
+        if not query:
+            return False
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return True
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                raise e
+            return False
+
     # ================================================================
     # ВХОДНАЯ ТОЧКА
     # ================================================================
@@ -67,7 +83,7 @@ class MetricsHandlers:
         if not user_id:
             text = "❌ Сначала нужно пройти регистрацию. Отправь команду /start"
             if query:
-                await query.edit_message_text(text, parse_mode="HTML")
+                await self._safe_edit_message(query, text)
             else:
                 await update.message.reply_text(text, parse_mode="HTML")
             return ConversationHandler.END
@@ -82,12 +98,14 @@ class MetricsHandlers:
             "Чем больше данных — тем точнее мои рекомендации по питанию и образу жизни! 🧠"
         )
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_metrics_main_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_metrics_main_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_metrics_main_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_MAIN_MENU
 
     async def handle_main_menu(
@@ -110,10 +128,8 @@ class MetricsHandlers:
         if data == CALLBACK_METRICS_EDIT:
             # Показываем уже сохранённые метрики для редактирования
             today = date.today()
-            existing = await self.metrics_repo.get_metrics(
-                await self.user_repo.get_user_id(update.effective_user.id),
-                today
-            )
+            user_id = await self.user_repo.get_user_id(update.effective_user.id)
+            existing = await self.metrics_repo.get_metrics(user_id, today)
             if existing:
                 self._save_today_metrics(context, dict(existing))
                 return await self._show_edit_menu(update, context)
@@ -122,11 +138,11 @@ class MetricsHandlers:
                 return await self._start_sleep_input(update, context)
 
         if data == CALLBACK_METRICS_HISTORY:
-            # TODO: показать историю метрик
-            await query.edit_message_text(
-                "📊 <b>История метрик</b>\n\nФункция в разработке. Скоро появится! 🚀",
-                reply_markup=get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU),
-                parse_mode="HTML"
+            text = "📊 <b>История метрик</b>\n\nФункция в разработке. Скоро появится! 🚀"
+            await self._safe_edit_message(
+                query, 
+                text, 
+                get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
             )
             return STATE_MAIN_MENU
 
@@ -149,12 +165,14 @@ class MetricsHandlers:
             "Выбери из вариантов или введи своё значение."
         )
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_sleep_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_sleep_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_sleep_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_SLEEP_HOURS
 
     async def process_sleep_hours(
@@ -167,9 +185,9 @@ class MetricsHandlers:
             data = query.data
 
             if data == "sleep_custom":
-                await query.edit_message_text(
-                    "✏️ Введи количество часов (например: 7.5 или 8):",
-                    parse_mode="HTML"
+                await self._safe_edit_message(
+                    query,
+                    "✏️ Введи количество часов (например: 7.5 или 8):"
                 )
                 return STATE_SLEEP_HOURS
 
@@ -204,12 +222,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_SLEEP} <b>Оцени качество сна</b> (1 — очень плохо, 5 — отлично):"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_sleep_quality_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_sleep_quality_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_sleep_quality_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_SLEEP_QUALITY
 
     async def process_sleep_quality(
@@ -237,12 +257,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_SLEEP} <b>Сколько раз ты просыпался за ночь?</b>"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_awakenings_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_awakenings_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_awakenings_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_SLEEP_AWAKENINGS
 
     async def process_sleep_awakenings(
@@ -270,12 +292,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя сейчас?</b>\n\nОцени энергию от 1 до 10:"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_energy_stress_keyboard("energy_morning"),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_morning"))
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_energy_stress_keyboard("energy_morning"),
+                parse_mode="HTML"
+            )
         return STATE_ENERGY_MORNING
 
     async def process_energy_morning(
@@ -310,12 +334,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя сейчас?</b>\n\nОцени энергию от 1 до 10:"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_energy_stress_keyboard("energy_evening"),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard("energy_evening"))
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_energy_stress_keyboard("energy_evening"),
+                parse_mode="HTML"
+            )
         return STATE_ENERGY_EVENING
 
     async def process_energy_evening(
@@ -344,12 +370,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_STRESS} <b>Оцени уровень стресса за сегодня</b> (1 — спокоен, 10 — очень напряжён):"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_energy_stress_keyboard("stress"),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_energy_stress_keyboard("stress"))
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_energy_stress_keyboard("stress"),
+                parse_mode="HTML"
+            )
         return STATE_STRESS
 
     async def process_stress(
@@ -378,12 +406,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_STEPS} <b>Сколько шагов ты прошёл сегодня?</b>"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_steps_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_steps_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_steps_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_STEPS
 
     async def process_steps(
@@ -396,9 +426,9 @@ class MetricsHandlers:
             data = query.data
 
             if data == "steps_custom":
-                await query.edit_message_text(
-                    "✏️ Введи количество шагов (например: 8500):",
-                    parse_mode="HTML"
+                await self._safe_edit_message(
+                    query,
+                    "✏️ Введи количество шагов (например: 8500):"
                 )
                 return STATE_STEPS
 
@@ -433,12 +463,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_STEPS} <b>Сколько часов ты провёл на ногах?</b>\n(не считая тренировок)"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_hours_on_feet_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_hours_on_feet_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_hours_on_feet_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_HOURS_ON_FEET
 
     async def process_hours_on_feet(
@@ -451,9 +483,9 @@ class MetricsHandlers:
             data = query.data
 
             if data == "feet_custom":
-                await query.edit_message_text(
-                    "✏️ Введи количество часов (например: 4.5):",
-                    parse_mode="HTML"
+                await self._safe_edit_message(
+                    query,
+                    "✏️ Введи количество часов (например: 4.5):"
                 )
                 return STATE_HOURS_ON_FEET
 
@@ -488,12 +520,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_WORKOUT} <b>Была ли у тебя тренировка сегодня?</b>"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_workout_type_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_workout_type_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_workout_type_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_WORKOUT_TYPE
 
     async def process_workout_type(
@@ -526,12 +560,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_WORKOUT} <b>Сколько минут длилась тренировка?</b>"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_workout_duration_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_workout_duration_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_workout_duration_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_WORKOUT_DURATION
 
     async def process_workout_duration(
@@ -544,9 +580,9 @@ class MetricsHandlers:
             data = query.data
 
             if data == "duration_custom":
-                await query.edit_message_text(
-                    "✏️ Введи длительность в минутах (например: 45):",
-                    parse_mode="HTML"
+                await self._safe_edit_message(
+                    query,
+                    "✏️ Введи длительность в минутах (например: 45):"
                 )
                 return STATE_WORKOUT_DURATION
 
@@ -581,12 +617,14 @@ class MetricsHandlers:
 
         text = f"{EMOJI_WORKOUT} <b>Оцени интенсивность тренировки</b> (RPE 1-10):"
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_workout_intensity_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_workout_intensity_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_workout_intensity_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_WORKOUT_INTENSITY
 
     async def process_workout_intensity(
@@ -623,12 +661,14 @@ class MetricsHandlers:
             "Всё верно?"
         )
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_confirm_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_confirm_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_confirm_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_CONFIRM
 
     async def _show_edit_menu(
@@ -646,12 +686,14 @@ class MetricsHandlers:
             "Что хочешь изменить?"
         )
 
-        target = query.edit_message_text if query else update.message.reply_text
-        await target(
-            text,
-            reply_markup=get_edit_keyboard(),
-            parse_mode="HTML"
-        )
+        if query:
+            await self._safe_edit_message(query, text, get_edit_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_edit_keyboard(),
+                parse_mode="HTML"
+            )
         return STATE_MAIN_MENU
 
     async def confirm_and_save(
@@ -707,21 +749,6 @@ class MetricsHandlers:
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
         return ConversationHandler.END
-
-    # ================================================================
-    # ЕЖЕДНЕВНЫЕ НАПОМИНАНИЯ
-    # ================================================================
-
-    async def send_morning_reminder(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Отправляет утреннее напоминание о заполнении метрик."""
-        from telegram import Bot
-        bot: Bot = context.bot
-        # TODO: получить список пользователей с включёнными напоминаниями
-        pass
-
-    async def send_evening_reminder(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Отправляет вечернее напоминание о заполнении метрик."""
-        pass
 
 
 # ================================================================
