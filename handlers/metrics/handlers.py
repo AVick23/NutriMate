@@ -10,6 +10,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler,
     CallbackQueryHandler, MessageHandler, filters
 )
+from telegram.error import BadRequest
 
 from db import Database, UserRepository, DailyMetricsRepository
 from .constants import *
@@ -60,10 +61,12 @@ class MetricsHandlers:
                 parse_mode="HTML"
             )
             return True
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                return False
+            raise e
         except Exception as e:
-            if "Message is not modified" not in str(e):
-                raise e
-            return False
+            raise e
 
     # ================================================================
     # ВХОДНАЯ ТОЧКА
