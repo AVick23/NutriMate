@@ -1,8 +1,8 @@
 """
-Обработчики для сбора ежедневных метрик.
+Обработчики для сбора ежедневных метрик и аналитики.
 """
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional, Dict, Any
 
 from telegram import Update
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsHandlers:
-    """Обработчики для сбора метрик."""
+    """Обработчики для сбора метрик и аналитики."""
 
     def __init__(self, db: Database):
         self.db = db
@@ -67,6 +67,17 @@ class MetricsHandlers:
             raise e
         except Exception as e:
             raise e
+
+    def _state_name(self, state_type: str) -> str:
+        """Возвращает человекочитаемое название состояния."""
+        names = {
+            "metabolic_adaptation": "Метаболическая адаптация",
+            "body_recomposition": "Рекомпозиция тела ✨",
+            "overtraining": "Перетренированность",
+            "stress_plateau": "Стрессовое плато",
+            "insulin_resistance": "Признаки инсулинорезистентности",
+        }
+        return names.get(state_type, state_type)
 
     # ================================================================
     # ВХОДНАЯ ТОЧКА
@@ -140,6 +151,9 @@ class MetricsHandlers:
                 await query.answer("Нет сохранённых метрик за сегодня", show_alert=True)
                 return await self._start_sleep_input(update, context)
 
+        if data == CALLBACK_METRICS_ANALYTICS:
+            return await self._show_analytics_menu(update, context)
+
         if data == CALLBACK_METRICS_HISTORY:
             text = "📊 <b>История метрик</b>\n\nФункция в разработке. Скоро появится! 🚀"
             await self._safe_edit_message(
@@ -150,6 +164,238 @@ class MetricsHandlers:
             return STATE_MAIN_MENU
 
         return STATE_MAIN_MENU
+
+    # ================================================================
+    # АНАЛИТИКА
+    # ================================================================
+
+    async def _show_analytics_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Показывает меню выбора типа аналитики."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        text = (
+            "📊 <b>Аналитика</b>\n\n"
+            "Выбери, какую аналитику хочешь посмотреть:\n\n"
+            "• <b>Дневная</b> — детальный анализ за конкретный день\n"
+            "• <b>Недельная</b> — средние значения и тренды за 7 дней\n"
+            "• <b>Тренды</b> — динамика изменений за последние 30 дней"
+        )
+
+        if query:
+            await self._safe_edit_message(query, text, get_analytics_keyboard())
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=get_analytics_keyboard(),
+                parse_mode="HTML"
+            )
+        return STATE_ANALYTICS
+
+    async def handle_analytics(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает выбор типа аналитики."""
+        query = update.callback_query
+        await query.answer()
+
+        data = query.data
+        user = update.effective_user
+        user_id = await self.user_repo.get_user_id(user.id)
+
+        if data == CALLBACK_ANALYTICS_DAILY:
+            return await self._show_daily_analytics(update, context, user_id)
+        elif data == CALLBACK_ANALYTICS_WEEKLY:
+            return await self._show_weekly_analytics(update, context, user_id)
+        elif data == CALLBACK_ANALYTICS_TRENDS:
+            return await self._show_trends_analytics(update, context, user_id)
+        elif data == CALLBACK_METRICS_BACK_TO_MENU:
+            return await self.show_metrics_menu(update, context)
+
+        return STATE_ANALYTICS
+
+    async def _show_daily_analytics(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+    ) -> int:
+        """Показывает дневную аналитику за вчера."""
+        query = update.callback_query
+        
+        yesterday = date.today() - timedelta(days=1)
+        
+        # Получаем агрегированные данные за вчера
+        from analytics import DailyAggregator, ModifierEngine, InsightGenerator
+        
+        aggregator = DailyAggregator(self.db)
+        modifier_engine = ModifierEngine(self.db)
+        insight_gen = InsightGenerator()
+        
+        # Агрегируем данные
+        aggregated = await aggregator.aggregate(user_id, yesterday)
+        
+        # Получаем профиль пользователя для расчёта TDEE
+        profile = await self.user_repo.get_profile(user_id)
+        base_tdee = profile["daily_kcal"] if profile else 2000
+        
+        # Рассчитываем скорректированный TDEE
+        adjusted_tdee, modifiers, confidence = await modifier_engine.calculate_adjusted_tdee(
+            user_id, base_tdee, aggregated
+        )
+        
+        # Получаем инсайты
+        insights = insight_gen.generate_insights(aggregated)
+        
+        # Формируем текст аналитики
+        text = f"📅 <b>Аналитика за {yesterday.strftime('%d.%m.%Y')}</b>\n\n"
+        
+        # Основные показатели
+        text += "━" * 25 + "\n"
+        text += "📊 <b>Основные показатели:</b>\n"
+        text += f"🔥 Калории: {aggregated.nutrition.total_kcal} ккал\n"
+        if aggregated.nutrition.total_protein_g:
+            text += f"🍗 Белок: {aggregated.nutrition.total_protein_g:.0f} г\n"
+        if aggregated.water_ml:
+            text += f"💧 Вода: {aggregated.water_ml} мл\n"
+        if aggregated.sleep.hours:
+            text += f"😴 Сон: {aggregated.sleep.hours:.1f} ч"
+            if aggregated.sleep.quality:
+                text += f" ({'⭐' * aggregated.sleep.quality})"
+            text += "\n"
+        if aggregated.stress:
+            text += f"😰 Стресс: {aggregated.stress}/10\n"
+        if aggregated.activity.steps:
+            text += f"👣 Шаги: {aggregated.activity.steps:,}\n"
+        
+        # Метаболизм
+        if aggregated.derived.eating_window_hours:
+            text += f"⏰ Окно питания: {aggregated.derived.eating_window_hours:.0f} ч\n"
+        
+        text += "\n━" * 25 + "\n"
+        text += "⚡ <b>Метаболизм (TDEE):</b>\n"
+        text += f"📊 Базовый: {base_tdee} ккал\n"
+        text += f"🎯 Скорректированный: {adjusted_tdee} ккал\n"
+        
+        if confidence < 70:
+            text += f"\n⚠️ <i>Точность анализа: {confidence}% (заполни больше метрик)</i>\n"
+        
+        # Инсайты
+        if insights:
+            text += "\n━" * 25 + "\n"
+            text += "💡 <b>Персональные инсайты:</b>\n"
+            for insight in insights[:3]:
+                text += f"{insight.emoji} <b>{insight.title}</b>\n"
+                text += f"   {insight.message[:80]}...\n\n"
+        
+        # Если мало данных
+        if aggregated.sleep.hours is None and aggregated.stress is None:
+            text += "\n📝 <i>Заполни больше метрик (сон, стресс, шаги),\n"
+            text += "чтобы я мог давать более точные рекомендации!</i>\n"
+        
+        text += "\n━" * 25 + "\n"
+        text += "📊 <a href='https://t.me/nutrimate'>#NutriMate</a>"
+        
+        await self._safe_edit_message(query, text, get_back_keyboard("metrics_analytics"))
+        return STATE_ANALYTICS
+
+    async def _show_weekly_analytics(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+    ) -> int:
+        """Показывает недельную аналитику."""
+        query = update.callback_query
+        
+        from analytics import WeeklyReportGenerator
+        
+        # Получаем профиль пользователя
+        profile = await self.user_repo.get_profile(user_id)
+        
+        # Генерируем недельный отчёт
+        report_gen = WeeklyReportGenerator(self.db)
+        report = await report_gen.generate_report(user_id, profile)
+        
+        await self._safe_edit_message(query, report, get_back_keyboard("metrics_analytics"))
+        return STATE_ANALYTICS
+
+    async def _show_trends_analytics(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+    ) -> int:
+        """Показывает тренды и прогресс за последние 30 дней."""
+        query = update.callback_query
+        
+        from analytics import DailyAggregator, StateDetector
+        
+        aggregator = DailyAggregator(self.db)
+        state_detector = StateDetector()
+        
+        # Получаем данные за последние 30 дней
+        end_date = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=30)
+        
+        aggregates = []
+        for i in range(31):
+            current_date = start_date + timedelta(days=i)
+            if current_date <= end_date:
+                agg = await aggregator.aggregate(user_id, current_date)
+                aggregates.append(agg)
+        
+        # Получаем профиль
+        profile = await self.user_repo.get_profile(user_id)
+        
+        # Детектируем состояния
+        states = state_detector.detect_states(aggregates, profile)
+        
+        # Формируем текст
+        text = "📈 <b>Тренды за 30 дней</b>\n\n"
+        
+        # Вес
+        weights = [agg.measurements.weight_kg for agg in aggregates if agg.measurements.weight_kg]
+        if len(weights) >= 2:
+            first_weight = weights[0]
+            last_weight = weights[-1]
+            change = last_weight - first_weight
+            direction = "📉" if change < 0 else "📈" if change > 0 else "➡️"
+            text += f"⚖️ Вес: {first_weight:.1f} → {last_weight:.1f} кг ({direction} {abs(change):.1f} кг)\n"
+        
+        # Талия
+        waists = [agg.measurements.waist_cm for agg in aggregates if agg.measurements.waist_cm]
+        if len(waists) >= 2:
+            first_waist = waists[0]
+            last_waist = waists[-1]
+            change = last_waist - first_waist
+            direction = "📉" if change < 0 else "📈" if change > 0 else "➡️"
+            text += f"📏 Талия: {first_waist:.1f} → {last_waist:.1f} см ({direction} {abs(change):.1f} см)\n"
+        
+        # Средний сон
+        sleep_hours = [agg.sleep.hours for agg in aggregates if agg.sleep.hours]
+        if sleep_hours:
+            avg_sleep = sum(sleep_hours) / len(sleep_hours)
+            text += f"😴 Средний сон: {avg_sleep:.1f} ч/день\n"
+        
+        # Средние шаги
+        steps = [agg.activity.steps for agg in aggregates if agg.activity.steps]
+        if steps:
+            avg_steps = sum(steps) / len(steps)
+            text += f"👣 Средние шаги: {avg_steps:.0f} шагов/день\n"
+        
+        # Обнаруженные состояния
+        active_states = [s for s in states if s.detected]
+        if active_states:
+            text += "\n━" * 25 + "\n"
+            text += "🔍 <b>Обнаруженные состояния:</b>\n"
+            for state in active_states[:3]:
+                text += f"{state.emoji} <b>{self._state_name(state.state_type)}</b>\n"
+                text += f"   {state.recommendation[:100]}...\n\n"
+        
+        # Если мало данных
+        if len(aggregates) < 14:
+            text += "\n📝 <i>Заполняй метрики чаще для более точного анализа трендов!</i>\n"
+        
+        text += "\n━" * 25 + "\n"
+        text += "📊 <a href='https://t.me/nutrimate'>#NutriMate</a>"
+        
+        await self._safe_edit_message(query, text, get_back_keyboard("metrics_analytics"))
+        return STATE_ANALYTICS
 
     # ================================================================
     # ОБРАБОТКА РЕДАКТИРОВАНИЯ
@@ -865,6 +1111,9 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.handle_main_menu, pattern="^metrics_"),
                 CallbackQueryHandler(h.handle_edit_actions, pattern="^(edit_|metrics_back_to_menu|metrics_confirm_all)"),
                 CallbackQueryHandler(h.back_to_main_menu, pattern="^back_to_main$"),
+            ],
+            STATE_ANALYTICS: [
+                CallbackQueryHandler(h.handle_analytics, pattern="^(analytics_|metrics_back_to_menu)"),
             ],
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern="^(sleep_|sleep_custom)"),

@@ -21,7 +21,8 @@
     STATE_DIGESTION,           # Пищеварение (Бристоль)
     STATE_CYCLE_DAY,           # День цикла (для женщин)
     STATE_CONFIRM,             # Подтверждение всех метрик
-) = range(17)  # <-- ИСПРАВЛЕНО: 17 состояний (не 18)
+    STATE_ANALYTICS,           # Просмотр аналитики
+) = range(18)
 
 # ============ Типы сессий ============
 SESSION_MORNING = "morning"   # Утренний опрос (сон, энергия утром)
@@ -32,6 +33,7 @@ CALLBACK_METRICS_SHOW = "metrics_show"
 CALLBACK_METRICS_TODAY = "metrics_today"
 CALLBACK_METRICS_EDIT = "metrics_edit"
 CALLBACK_METRICS_HISTORY = "metrics_history"
+CALLBACK_METRICS_ANALYTICS = "metrics_analytics"  # НОВЫЙ
 CALLBACK_METRICS_BACK_TO_DIARY = "metrics_back_to_diary"
 CALLBACK_METRICS_BACK_TO_MENU = "metrics_back_to_menu"
 
@@ -57,6 +59,11 @@ CALLBACK_EDIT_ENERGY_EVENING = "edit_energy_evening"
 CALLBACK_EDIT_STRESS = "edit_stress"
 CALLBACK_EDIT_STEPS = "edit_steps"
 CALLBACK_EDIT_WORKOUT = "edit_workout"
+
+# ============ Callback для аналитики ============
+CALLBACK_ANALYTICS_DAILY = "analytics_daily"
+CALLBACK_ANALYTICS_WEEKLY = "analytics_weekly"
+CALLBACK_ANALYTICS_TRENDS = "analytics_trends"
 
 # ============ Быстрые значения ============
 SLEEP_HOURS_QUICK = [6, 6.5, 7, 7.5, 8, 8.5, 9]
