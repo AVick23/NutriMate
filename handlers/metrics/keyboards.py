@@ -7,21 +7,20 @@ from .constants import (
     CALLBACK_METRICS_TODAY, CALLBACK_METRICS_EDIT, CALLBACK_METRICS_HISTORY,
     CALLBACK_METRICS_ANALYTICS, CALLBACK_METRICS_BACK_TO_DIARY, CALLBACK_METRICS_BACK_TO_MENU,
     CALLBACK_SLEEP, CALLBACK_ENERGY, CALLBACK_STRESS, CALLBACK_STEPS,
-    CALLBACK_WORKOUT, CALLBACK_HUNGER, CALLBACK_DIGESTION, CALLBACK_CYCLE,
+    CALLBACK_WORKOUT,
     CALLBACK_CONFIRM_ALL, CALLBACK_SKIP, CALLBACK_CANCEL,
     CALLBACK_EDIT_SLEEP, CALLBACK_EDIT_ENERGY_MORNING, CALLBACK_EDIT_ENERGY_EVENING,
     CALLBACK_EDIT_STRESS, CALLBACK_EDIT_STEPS, CALLBACK_EDIT_WORKOUT,
     CALLBACK_ANALYTICS_DAILY, CALLBACK_ANALYTICS_WEEKLY, CALLBACK_ANALYTICS_TRENDS,
     CALLBACK_BACK_TO_EDIT, CALLBACK_BACK_TO_MAIN,
     SLEEP_HOURS_QUICK, ENERGY_STRESS_QUICK, STEPS_QUICK,
-    WORKOUT_TYPES, WORKOUT_DURATIONS_QUICK, HUNGER_QUICK, DIGESTION_TYPES,
-    EMOJI_SLEEP, EMOJI_ENERGY, EMOJI_STRESS, EMOJI_STEPS,
-    EMOJI_WORKOUT, EMOJI_HUNGER, EMOJI_DIGESTION, EMOJI_CYCLE,
+    WORKOUT_TYPES, WORKOUT_DURATIONS_QUICK,
+    EMOJI_SLEEP, EMOJI_ENERGY, EMOJI_STRESS, EMOJI_STEPS, EMOJI_WORKOUT,
 )
 
 
 def get_metrics_main_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню метрик."""
+    """Главное меню метрик (без неработающих кнопок)."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Заполнить за сегодня", callback_data=CALLBACK_METRICS_TODAY)],
         [InlineKeyboardButton("✏️ Редактировать метрики", callback_data=CALLBACK_METRICS_EDIT)],
@@ -37,22 +36,6 @@ def get_analytics_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📅 Дневная аналитика", callback_data=CALLBACK_ANALYTICS_DAILY)],
         [InlineKeyboardButton("📊 Недельная аналитика", callback_data=CALLBACK_ANALYTICS_WEEKLY)],
         [InlineKeyboardButton("📈 Тренды и прогресс", callback_data=CALLBACK_ANALYTICS_TRENDS)],
-        [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
-    ])
-
-
-def get_metrics_menu_keyboard() -> InlineKeyboardMarkup:
-    """Меню выбора метрики для заполнения/редактирования."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{EMOJI_SLEEP} Сон", callback_data=CALLBACK_SLEEP)],
-        [InlineKeyboardButton(f"{EMOJI_ENERGY} Энергия", callback_data=CALLBACK_ENERGY)],
-        [InlineKeyboardButton(f"{EMOJI_STRESS} Стресс", callback_data=CALLBACK_STRESS)],
-        [InlineKeyboardButton(f"{EMOJI_STEPS} Шаги", callback_data=CALLBACK_STEPS)],
-        [InlineKeyboardButton(f"{EMOJI_WORKOUT} Тренировка", callback_data=CALLBACK_WORKOUT)],
-        [InlineKeyboardButton(f"{EMOJI_HUNGER} Голод", callback_data=CALLBACK_HUNGER)],
-        [InlineKeyboardButton(f"{EMOJI_DIGESTION} Пищеварение", callback_data=CALLBACK_DIGESTION)],
-        [InlineKeyboardButton(f"{EMOJI_CYCLE} Женский цикл", callback_data=CALLBACK_CYCLE)],
-        [InlineKeyboardButton("✅ Завершить", callback_data=CALLBACK_CONFIRM_ALL)],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
     ])
 
@@ -176,47 +159,6 @@ def get_workout_intensity_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("9-10 — Очень тяжело", callback_data="intensity_9")],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)],
     ])
-
-
-def get_hunger_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для оценки голода."""
-    buttons = []
-    row = []
-    for value in HUNGER_QUICK:
-        row.append(InlineKeyboardButton(str(value), callback_data=f"hunger_{value}"))
-        if len(row) == 5:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)])
-    return InlineKeyboardMarkup(buttons)
-
-
-def get_digestion_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для выбора типа стула по Бристольской шкале."""
-    buttons = []
-    for value, label in DIGESTION_TYPES:
-        buttons.append([InlineKeyboardButton(label, callback_data=f"digestion_{value}")])
-    buttons.append([InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)])
-    return InlineKeyboardMarkup(buttons)
-
-
-def get_cycle_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для ввода дня цикла."""
-    buttons = []
-    row = []
-    for day in [1, 5, 10, 14, 21, 28, 35]:
-        row.append(InlineKeyboardButton(str(day), callback_data=f"cycle_{day}"))
-        if len(row) == 4:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton("✏️ Свой день", callback_data="cycle_custom")])
-    buttons.append([InlineKeyboardButton("🚫 Не в цикле / не заполнять", callback_data="cycle_none")])
-    buttons.append([InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)])
-    return InlineKeyboardMarkup(buttons)
 
 
 def get_confirm_keyboard() -> InlineKeyboardMarkup:

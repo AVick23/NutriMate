@@ -77,28 +77,6 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
     else:
         lines.append("💪 Тренировка: ❌ не было или не заполнено")
     
-    # Голод (опционально)
-    hunger_before = metrics.get("hunger_before")
-    hunger_after = metrics.get("hunger_after")
-    if hunger_before is not None or hunger_after is not None:
-        before_text = f"{hunger_before}/10" if hunger_before is not None else "❌"
-        after_text = f"{hunger_after}/10" if hunger_after is not None else "❌"
-        lines.append(f"🍽️ Голод: до={before_text}, после={after_text}")
-    
-    # Пищеварение
-    digestion = metrics.get("digestion_bristol")
-    if digestion is not None:
-        digestion_names = {
-            1: "запор", 2: "запор", 3: "норма", 4: "идеал",
-            5: "мягкий", 6: "диарея", 7: "диарея"
-        }
-        lines.append(f"🚽 Пищеварение: тип {digestion} ({digestion_names.get(digestion, '')})")
-    
-    # Цикл
-    cycle_day = metrics.get("cycle_day")
-    if cycle_day is not None and cycle_day > 0:
-        lines.append(f"🌸 День цикла: {cycle_day}")
-    
     return "\n".join(lines)
 
 
