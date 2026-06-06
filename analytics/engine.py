@@ -1,5 +1,6 @@
 """
 Аналитика: сбор данных (aggregator) и расчёт модификаторов TDEE (modifier_engine).
+Совместимо с таблицей daily_metrics, где каждая метрика в отдельной колонке.
 """
 import logging
 import math
@@ -17,88 +18,121 @@ logger = logging.getLogger(__name__)
 
 class DailyMetricsRepository:
     """
-    Репозиторий для таблицы daily_metrics.
+    Репозиторий для таблицы daily_metrics (колонки под каждую метрику).
     """
+
     def __init__(self, db: Database):
         self.db = db
 
-    async def save_metric(self, user_id: int, metric_type: str, value: Any,
-                          sub_type: str = None, recorded_for_date: str = None) -> None:
-        if recorded_for_date is None:
-            recorded_for_date = date.today().isoformat()
-        async with self.db.transaction() as conn:
-            await conn.execute("""
-                INSERT INTO daily_metrics (user_id, metric_type, value, sub_type, recorded_for_date)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, metric_type, sub_type, recorded_for_date) DO UPDATE SET
-                value = excluded.value, recorded_at = CURRENT_TIMESTAMP
-            """, (user_id, metric_type, value, sub_type, recorded_for_date))
+    async def save_metrics(self, user_id: int, metric_date: date, metrics: Dict[str, Any]) -> None:
+        """Сохраняет переданные метрики в соответствующие колонки."""
+        # Разрешённые ключи (существующие колонки в таблице)
+        valid_keys = {
+            'sleep_hours', 'sleep_quality', 'sleep_awakenings',
+            'energy_morning', 'energy_evening', 'stress_level',
+            'steps', 'hours_on_feet', 'workout_type',
+            'workout_duration', 'workout_intensity',
+            'hunger_before', 'hunger_after', 'digestion_bristol', 'cycle_day', 'notes'
+        }
+        filtered = {k: v for k, v in metrics.items() if k in valid_keys and v is not None}
+        if not filtered:
+            return
 
-    async def get_metrics(self, user_id: int, target_date: date) -> Dict[str, Any]:
-        date_str = target_date.isoformat()
+        async with self.db.transaction() as conn:
+            # Проверяем, существует ли запись за этот день
+            cursor = await conn.execute(
+                "SELECT 1 FROM daily_metrics WHERE user_id = ? AND metric_date = ?",
+                (user_id, metric_date.isoformat())
+            )
+            exists = await cursor.fetchone()
+
+            if exists:
+                # UPDATE
+                set_clause = ", ".join(f"{k} = ?" for k in filtered)
+                values = list(filtered.values()) + [user_id, metric_date.isoformat()]
+                await conn.execute(
+                    f"UPDATE daily_metrics SET {set_clause}, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE user_id = ? AND metric_date = ?",
+                    values
+                )
+            else:
+                # INSERT
+                columns = ", ".join(filtered.keys()) + ", user_id, metric_date"
+                placeholders = ", ".join(["?"] * (len(filtered) + 2))
+                values = list(filtered.values()) + [user_id, metric_date.isoformat()]
+                await conn.execute(
+                    f"INSERT INTO daily_metrics ({columns}) VALUES ({placeholders})",
+                    values
+                )
+
+    async def get_metrics(self, user_id: int, metric_date: date) -> Dict[str, Any]:
+        """Возвращает все метрики за указанную дату (словарь)."""
         async with self.db.connection() as conn:
             cursor = await conn.execute(
-                "SELECT metric_type, value, sub_type FROM daily_metrics WHERE user_id = ? AND recorded_for_date = ?",
-                (user_id, date_str)
+                "SELECT * FROM daily_metrics WHERE user_id = ? AND metric_date = ?",
+                (user_id, metric_date.isoformat())
+            )
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                # Удаляем служебные поля
+                for key in ('id', 'user_id', 'metric_date', 'created_at', 'updated_at'):
+                    result.pop(key, None)
+                return result
+            return {}
+
+    async def get_metrics_range(self, user_id: int, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        """Возвращает метрики за диапазон дат."""
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM daily_metrics WHERE user_id = ? AND metric_date BETWEEN ? AND ? ORDER BY metric_date ASC",
+                (user_id, start_date.isoformat(), end_date.isoformat())
             )
             rows = await cursor.fetchall()
-            result = {}
+            result = []
             for row in rows:
-                mt = row["metric_type"]
-                st = row["sub_type"]
-                val = row["value"]
-                if mt == "sleep_hours":
-                    result["sleep_hours"] = val
-                elif mt == "sleep_quality":
-                    result["sleep_quality"] = int(val)
-                elif mt == "sleep_awakenings":
-                    result["sleep_awakenings"] = int(val)
-                elif mt == "energy":
-                    if st == "morning":
-                        result["energy_morning"] = int(val)
-                    elif st == "evening":
-                        result["energy_evening"] = int(val)
-                elif mt == "stress":
-                    result["stress_level"] = int(val)
-                elif mt == "steps":
-                    result["steps"] = int(val)
-                elif mt == "hours_on_feet":
-                    result["hours_on_feet"] = val
-                elif mt == "workout_type":
-                    result["workout_type"] = val
-                elif mt == "workout_duration":
-                    result["workout_duration"] = int(val)
-                elif mt == "workout_intensity":
-                    result["workout_intensity"] = int(val)
+                d = dict(row)
+                for key in ('id', 'user_id', 'created_at', 'updated_at'):
+                    d.pop(key, None)
+                result.append(d)
             return result
 
-    async def save_metrics(self, user_id: int, target_date: date, metrics: Dict[str, Any]) -> None:
+    async def get_last_metrics(self, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+        """Возвращает последние N дней метрик."""
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        return await self.get_metrics_range(user_id, start_date, end_date)
+
+    # Для совместимости со старым кодом, если где-то используется save_metric
+    async def save_metric(self, user_id: int, metric_type: str, value: Any,
+                          sub_type: str = None, recorded_for_date: str = None) -> None:
         """
-        Сохраняет все метрики за день, переданные в виде словаря.
-        Преобразует ключи словаря в соответствующие metric_type и sub_type.
+        Устаревший метод, оставлен для обратной совместимости.
+        Преобразует вызов в сохранение в соответствующую колонку.
         """
-        # Маппинг: ключ в metrics -> (metric_type, sub_type)
+        if recorded_for_date is None:
+            recorded_for_date = date.today().isoformat()
+        metric_date = date.fromisoformat(recorded_for_date)
+        # Маппинг старых metric_type/sub_type в колонки
         mapping = {
-            "sleep_hours": ("sleep_hours", None),
-            "sleep_quality": ("sleep_quality", None),
-            "sleep_awakenings": ("sleep_awakenings", None),
-            "energy_morning": ("energy", "morning"),
-            "energy_evening": ("energy", "evening"),
-            "stress_level": ("stress", None),
-            "steps": ("steps", None),
-            "hours_on_feet": ("hours_on_feet", None),
-            "workout_type": ("workout_type", None),
-            "workout_duration": ("workout_duration", None),
-            "workout_intensity": ("workout_intensity", None),
+            ("sleep", "hours"): "sleep_hours",
+            ("sleep", "quality"): "sleep_quality",
+            ("sleep", "awakenings"): "sleep_awakenings",
+            ("energy", "morning"): "energy_morning",
+            ("energy", "evening"): "energy_evening",
+            ("stress", None): "stress_level",
+            ("steps", None): "steps",
+            ("hours_on_feet", None): "hours_on_feet",
+            ("workout", "type"): "workout_type",
+            ("workout", "duration"): "workout_duration",
+            ("workout", "intensity"): "workout_intensity",
         }
-        for key, value in metrics.items():
-            if value is None:
-                continue
-            if key in mapping:
-                metric_type, sub_type = mapping[key]
-                await self.save_metric(user_id, metric_type, value, sub_type, target_date.isoformat())
-            else:
-                logger.warning(f"Unknown metric key: {key}")
+        col = mapping.get((metric_type, sub_type))
+        if col is None:
+            logger.warning(f"Unknown metric mapping: {metric_type}/{sub_type}")
+            return
+        metrics = {col: value}
+        await self.save_metrics(user_id, metric_date, metrics)
 
 
 class DailyAggregator:
