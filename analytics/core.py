@@ -1,5 +1,5 @@
 """
-Базовые модели данных и утилиты для аналитики.
+Базовые модели данных, константы и утилиты для аналитики.
 """
 import logging
 import math
@@ -8,6 +8,42 @@ from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+# ================================================================
+# КОНСТАНТЫ
+# ================================================================
+
+# Пороги для корреляционного анализа
+MIN_CORRELATION = 0.3
+MIN_SAMPLE_SIZE = 14
+P_VALUE_THRESHOLD = 0.05
+LAGS = [0, 1, 3, 5, 7]
+
+# Человекочитаемые названия метрик
+METRIC_NAMES = {
+    "sleep_hours": "продолжительность сна",
+    "sleep_quality": "качество сна",
+    "stress_level": "уровень стресса",
+    "energy_morning": "утренняя энергия",
+    "energy_evening": "вечерняя энергия",
+    "steps": "количество шагов",
+    "total_kcal": "потребление калорий",
+    "total_protein_g": "потребление белка",
+    "water_ml": "потребление воды",
+    "weight_kg": "вес",
+    "waist_cm": "объём талии",
+    "hips_cm": "объём бёдер",
+}
+
+# Названия состояний
+STATE_NAMES = {
+    "metabolic_adaptation": "Метаболическая адаптация",
+    "body_recomposition": "Рекомпозиция тела ✨",
+    "overtraining": "Перетренированность",
+    "stress_plateau": "Стрессовое плато",
+    "insulin_resistance": "Инсулинорезистентность",
+}
 
 
 # ================================================================
@@ -76,7 +112,7 @@ class MeasurementsData:
 
 @dataclass
 class DerivedMetrics:
-    """Производные метрики."""
+    """Рассчитанные метрики."""
     eating_window_hours: Optional[float] = None
     last_meal_hour: Optional[int] = None
     protein_per_kg: Optional[float] = None
@@ -147,49 +183,11 @@ class StateDetection:
 
 
 # ================================================================
-# КОНСТАНТЫ
-# ================================================================
-
-# Пороги для корреляционного анализа
-MIN_CORRELATION = 0.3
-MIN_SAMPLE_SIZE = 14
-P_VALUE_THRESHOLD = 0.05
-LAGS = [0, 1, 3, 5, 7]
-
-# Человекочитаемые названия метрик
-METRIC_NAMES = {
-    "sleep_hours": "продолжительность сна",
-    "sleep_quality": "качество сна",
-    "stress_level": "уровень стресса",
-    "energy_morning": "утренняя энергия",
-    "energy_evening": "вечерняя энергия",
-    "steps": "количество шагов",
-    "total_kcal": "потребление калорий",
-    "total_protein_g": "потребление белка",
-    "water_ml": "потребление воды",
-    "weight_kg": "вес",
-    "waist_cm": "объём талии",
-    "hips_cm": "объём бёдер",
-}
-
-# Названия состояний
-STATE_NAMES = {
-    "metabolic_adaptation": "Метаболическая адаптация",
-    "body_recomposition": "Рекомпозиция тела ✨",
-    "overtraining": "Перетренированность",
-    "stress_plateau": "Стрессовое плато",
-    "insulin_resistance": "Инсулинорезистентность",
-}
-
-
-# ================================================================
 # УТИЛИТЫ
 # ================================================================
 
 def safe_average(values: List[Any]) -> Optional[float]:
-    """
-    Безопасное вычисление среднего, игнорируя None.
-    """
+    """Безопасное вычисление среднего, игнорируя None."""
     filtered = [v for v in values if v is not None]
     if not filtered:
         return None
@@ -232,19 +230,20 @@ def pearson_correlation(x: List[float], y: List[float]) -> Tuple[float, float]:
     t_stat = r * math.sqrt((n - 2) / (1 - r * r)) if abs(r) < 1 else 100
     df = n - 2
 
-    # Упрощённая, но достаточно точная оценка p-value
+    # Улучшенная оценка p-value
     if df > 30:
-        # Для больших выборок используем нормальное приближение
+        # Для больших выборок — нормальное приближение
         p_value = 2 * (1 - 0.5 * (1 + math.erf(abs(t_stat) / math.sqrt(2))))
     else:
-        # Для малых выборок используем приближённые пороги
-        if abs(t_stat) > 3:
+        # Для малых выборок — табличные пороги
+        abs_t = abs(t_stat)
+        if abs_t > 3.5:
             p_value = 0.001
-        elif abs(t_stat) > 2.5:
+        elif abs_t > 2.8:
             p_value = 0.01
-        elif abs(t_stat) > 2:
+        elif abs_t > 2.0:
             p_value = 0.05
-        elif abs(t_stat) > 1.5:
+        elif abs_t > 1.7:
             p_value = 0.1
         else:
             p_value = 0.5
@@ -278,7 +277,8 @@ def get_lagged_pairs(
 
     if lag == 0:
         # Синхронная корреляция
-        pairs = [(x, y) for x, y in zip(x_vals, y_vals) if x is not None and y is not None]
+        pairs = [(x, y) for x, y in zip(x_vals, y_vals)
+                 if x is not None and y is not None]
     else:
         # Лаговая корреляция: x в день t, y в день t+lag
         pairs = []
@@ -294,10 +294,10 @@ def get_lagged_pairs(
     return [p[0] for p in pairs], [p[1] for p in pairs]
 
 
-def aggregates_to_dict(aggregates: List[DailyAggregate]) -> Dict[str, List[Optional[float]]]:
-    """
-    Преобразует список DailyAggregate в словарь временных рядов для анализа.
-    """
+def aggregates_to_dict(
+    aggregates: List[DailyAggregate]
+) -> Dict[str, List[Optional[float]]]:
+    """Преобразует список DailyAggregate в словарь временных рядов."""
     metrics = [
         "sleep_hours", "sleep_quality", "stress_level",
         "energy_morning", "energy_evening", "steps",
@@ -324,14 +324,16 @@ def aggregates_to_dict(aggregates: List[DailyAggregate]) -> Dict[str, List[Optio
     return result
 
 
-def generate_effect_text(metric_x: str, metric_y: str, r: float, lag: int) -> str:
-    """
-    Генерирует человекочитаемое описание паттерна.
-    """
+def generate_effect_text(
+    metric_x: str, metric_y: str, r: float, lag: int
+) -> str:
+    """Генерирует человекочитаемое описание паттерна."""
     x_name = METRIC_NAMES.get(metric_x, metric_x)
     y_name = METRIC_NAMES.get(metric_y, metric_y)
     direction = "увеличивает" if r > 0 else "уменьшает"
-    strength = "сильно" if abs(r) > 0.7 else "умеренно" if abs(r) > 0.5 else "слабо"
+    strength = ("сильно" if abs(r) > 0.7
+                else "умеренно" if abs(r) > 0.5
+                else "слабо")
 
     if lag == 0:
         return f"{x_name} {direction} {y_name} (корреляция {strength})"

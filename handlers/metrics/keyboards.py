@@ -1,5 +1,6 @@
 """
 Клавиатуры для модуля сбора метрик.
+Расширенная версия с поддержкой продвинутой аналитики.
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .constants import (
@@ -9,10 +10,12 @@ from .constants import (
     CALLBACK_EDIT_SLEEP, CALLBACK_EDIT_ENERGY_MORNING, CALLBACK_EDIT_ENERGY_EVENING,
     CALLBACK_EDIT_STRESS, CALLBACK_EDIT_STEPS, CALLBACK_EDIT_WORKOUT,
     CALLBACK_ANALYTICS_DAILY, CALLBACK_ANALYTICS_WEEKLY, CALLBACK_ANALYTICS_TRENDS,
+    CALLBACK_ANALYTICS_PATTERNS, CALLBACK_ANALYTICS_FORECAST,
+    CALLBACK_ANALYTICS_BEST_DAY, CALLBACK_ANALYTICS_STATES,
     CALLBACK_BACK_TO_EDIT, CALLBACK_BACK_TO_MAIN, CALLBACK_BACK_TO_WORKOUT_TYPE,
+    CALLBACK_BACK_TO_ANALYTICS,
     SLEEP_HOURS_QUICK, ENERGY_STRESS_QUICK, STEPS_QUICK,
     WORKOUT_TYPES, WORKOUT_DURATIONS_QUICK,
-    EMOJI_SLEEP, EMOJI_ENERGY, EMOJI_STRESS, EMOJI_STEPS, EMOJI_WORKOUT,
 )
 
 
@@ -28,11 +31,53 @@ def get_metrics_main_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_analytics_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для выбора типа аналитики."""
+    """Расширенное меню аналитики с новыми разделами."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📅 Дневная аналитика", callback_data=CALLBACK_ANALYTICS_DAILY)],
-        [InlineKeyboardButton("📊 Недельная аналитика", callback_data=CALLBACK_ANALYTICS_WEEKLY)],
-        [InlineKeyboardButton("📈 Тренды и прогресс", callback_data=CALLBACK_ANALYTICS_TRENDS)],
+        [
+            InlineKeyboardButton("📅 За день", callback_data=CALLBACK_ANALYTICS_DAILY),
+            InlineKeyboardButton("📊 За неделю", callback_data=CALLBACK_ANALYTICS_WEEKLY),
+        ],
+        [
+            InlineKeyboardButton("📈 Тренды", callback_data=CALLBACK_ANALYTICS_TRENDS),
+            InlineKeyboardButton("🔍 Паттерны", callback_data=CALLBACK_ANALYTICS_PATTERNS),
+        ],
+        [
+            InlineKeyboardButton("🔮 Прогноз", callback_data=CALLBACK_ANALYTICS_FORECAST),
+            InlineKeyboardButton("🏆 Лучший день", callback_data=CALLBACK_ANALYTICS_BEST_DAY),
+        ],
+        [InlineKeyboardButton("🧬 Состояния", callback_data=CALLBACK_ANALYTICS_STATES)],
+        [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
+    ])
+
+
+def get_patterns_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана паттернов."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 К аналитике", callback_data=CALLBACK_METRICS_ANALYTICS)],
+        [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
+    ])
+
+
+def get_forecast_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана прогноза."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 К аналитике", callback_data=CALLBACK_METRICS_ANALYTICS)],
+        [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
+    ])
+
+
+def get_best_day_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана лучшего дня."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 К аналитике", callback_data=CALLBACK_METRICS_ANALYTICS)],
+        [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
+    ])
+
+
+def get_states_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана состояний."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 К аналитике", callback_data=CALLBACK_METRICS_ANALYTICS)],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
     ])
 
@@ -142,7 +187,6 @@ def get_workout_duration_keyboard() -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     buttons.append([InlineKeyboardButton("✏️ Свой вариант", callback_data="duration_custom")])
-    # Добавляем кнопку "Назад к типу тренировки"
     buttons.append([InlineKeyboardButton("← Назад к типу", callback_data=CALLBACK_BACK_TO_WORKOUT_TYPE)])
     return InlineKeyboardMarkup(buttons)
 
@@ -160,11 +204,11 @@ def get_workout_intensity_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения всех метрик (добавлена кнопка Отмена)."""
+    """Клавиатура подтверждения всех метрик."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Сохранить всё", callback_data=CALLBACK_CONFIRM_ALL)],
         [InlineKeyboardButton("✏️ Редактировать", callback_data=CALLBACK_METRICS_EDIT)],
-        [InlineKeyboardButton("❌ Отмена", callback_data=CALLBACK_CANCEL)],          # добавлено
+        [InlineKeyboardButton("❌ Отмена", callback_data=CALLBACK_CANCEL)],
     ])
 
 

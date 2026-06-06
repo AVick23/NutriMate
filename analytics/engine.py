@@ -1,10 +1,12 @@
 """
 Агрегатор данных и расчёт модификаторов TDEE.
+Совместимо с таблицей daily_metrics (колонки под каждую метрику).
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import List, Dict, Any, Optional, Tuple
-from db import Database, UserRepository, DailyMetricsRepository
+
+from db import Database, UserRepository
 from .core import (
     DailyAggregate, NutritionData, SleepData, EnergyData,
     ActivityData, WorkoutData, MeasurementsData, DerivedMetrics
@@ -13,28 +15,170 @@ from .core import (
 logger = logging.getLogger(__name__)
 
 
+# ================================================================
+# РЕПОЗИТОРИЙ МЕТРИК
+# ================================================================
+
+class DailyMetricsRepository:
+    """
+    Репозиторий для таблицы daily_metrics (колонки под каждую метрику).
+    """
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def save_metrics(
+        self, user_id: int, metric_date: date, metrics: Dict[str, Any]
+    ) -> None:
+        """Сохраняет переданные метрики в соответствующие колонки."""
+        # Разрешённые ключи (колонки таблицы)
+        valid_keys = {
+            'sleep_hours', 'sleep_quality', 'sleep_awakenings',
+            'energy_morning', 'energy_evening', 'stress_level',
+            'steps', 'hours_on_feet', 'workout_type',
+            'workout_duration', 'workout_intensity',
+            'hunger_before', 'hunger_after', 'digestion_bristol',
+            'cycle_day', 'notes'
+        }
+        filtered = {k: v for k, v in metrics.items()
+                    if k in valid_keys and v is not None}
+        if not filtered:
+            return
+
+        async with self.db.transaction() as conn:
+            # Проверяем существование записи
+            cursor = await conn.execute(
+                "SELECT 1 FROM daily_metrics "
+                "WHERE user_id = ? AND metric_date = ?",
+                (user_id, metric_date.isoformat())
+            )
+            exists = await cursor.fetchone()
+
+            if exists:
+                # UPDATE
+                set_clause = ", ".join(f"{k} = ?" for k in filtered)
+                values = list(filtered.values()) + [
+                    user_id, metric_date.isoformat()
+                ]
+                await conn.execute(
+                    f"UPDATE daily_metrics SET {set_clause}, "
+                    f"updated_at = CURRENT_TIMESTAMP "
+                    f"WHERE user_id = ? AND metric_date = ?",
+                    values
+                )
+            else:
+                # INSERT
+                columns = ", ".join(filtered.keys()) + ", user_id, metric_date"
+                placeholders = ", ".join(["?"] * (len(filtered) + 2))
+                values = list(filtered.values()) + [
+                    user_id, metric_date.isoformat()
+                ]
+                await conn.execute(
+                    f"INSERT INTO daily_metrics ({columns}) "
+                    f"VALUES ({placeholders})",
+                    values
+                )
+
+    async def get_metrics(
+        self, user_id: int, metric_date: date
+    ) -> Dict[str, Any]:
+        """Возвращает все метрики за указанную дату (словарь)."""
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM daily_metrics "
+                "WHERE user_id = ? AND metric_date = ?",
+                (user_id, metric_date.isoformat())
+            )
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                for key in ('id', 'user_id', 'metric_date',
+                            'created_at', 'updated_at'):
+                    result.pop(key, None)
+                return result
+            return {}
+
+    async def get_metrics_range(
+        self, user_id: int, start_date: date, end_date: date
+    ) -> List[Dict[str, Any]]:
+        """Возвращает метрики за диапазон дат."""
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM daily_metrics "
+                "WHERE user_id = ? AND metric_date BETWEEN ? AND ? "
+                "ORDER BY metric_date ASC",
+                (user_id, start_date.isoformat(), end_date.isoformat())
+            )
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                for key in ('id', 'user_id', 'created_at', 'updated_at'):
+                    d.pop(key, None)
+                result.append(d)
+            return result
+
+    # Для обратной совместимости
+    async def save_metric(
+        self, user_id: int, metric_type: str, value: Any,
+        sub_type: str = None, recorded_for_date: str = None
+    ) -> None:
+        """Устаревший метод, оставлен для совместимости."""
+        if recorded_for_date is None:
+            recorded_for_date = date.today().isoformat()
+        metric_date = date.fromisoformat(recorded_for_date)
+        mapping = {
+            ("sleep", "hours"): "sleep_hours",
+            ("sleep", "quality"): "sleep_quality",
+            ("sleep", "awakenings"): "sleep_awakenings",
+            ("energy", "morning"): "energy_morning",
+            ("energy", "evening"): "energy_evening",
+            ("stress", None): "stress_level",
+            ("steps", None): "steps",
+            ("hours_on_feet", None): "hours_on_feet",
+            ("workout", "type"): "workout_type",
+            ("workout", "duration"): "workout_duration",
+            ("workout", "intensity"): "workout_intensity",
+        }
+        col = mapping.get((metric_type, sub_type))
+        if col is None:
+            logger.warning(
+                f"Unknown metric mapping: {metric_type}/{sub_type}"
+            )
+            return
+        await self.save_metrics(user_id, metric_date, {col: value})
+
+
+# ================================================================
+# АГРЕГАТОР
+# ================================================================
+
 class DailyAggregator:
-    """Собирает и агрегирует все данные пользователя за указанный день."""
+    """Собирает и агрегирует все данные пользователя за день."""
 
     def __init__(self, db: Database):
         self.db = db
         self.user_repo = UserRepository(db)
         self.metrics_repo = DailyMetricsRepository(db)
 
-    async def aggregate(self, user_id: int, target_date: date) -> DailyAggregate:
+    async def aggregate(
+        self, user_id: int, target_date: date
+    ) -> DailyAggregate:
         """Собирает все данные за день в единую структуру."""
         result = DailyAggregate(date=target_date, user_id=user_id)
 
         # Питание
-        nutrition = await self._aggregate_nutrition(user_id, target_date)
-        result.nutrition = nutrition
+        result.nutrition = await self._aggregate_nutrition(
+            user_id, target_date
+        )
 
         # Вода
         result.water_ml = await self._aggregate_water(user_id, target_date)
 
         # Замеры тела
-        measurements = await self._aggregate_measurements(user_id, target_date)
-        result.measurements = measurements
+        result.measurements = await self._aggregate_measurements(
+            user_id, target_date
+        )
 
         # Метрики из daily_metrics
         metrics = await self.metrics_repo.get_metrics(user_id, target_date)
@@ -64,7 +208,9 @@ class DailyAggregator:
 
         return result
 
-    async def _aggregate_nutrition(self, user_id: int, target_date: date) -> NutritionData:
+    async def _aggregate_nutrition(
+        self, user_id: int, target_date: date
+    ) -> NutritionData:
         """Агрегирует данные о питании за день."""
         date_str = target_date.isoformat()
         async with self.db.connection() as conn:
@@ -89,25 +235,32 @@ class DailyAggregator:
                 last_meal_at=row["last_meal"],
             )
 
-    async def _aggregate_water(self, user_id: int, target_date: date) -> int:
+    async def _aggregate_water(
+        self, user_id: int, target_date: date
+    ) -> int:
         """Агрегирует данные о воде за день."""
         date_str = target_date.isoformat()
         async with self.db.connection() as conn:
             cursor = await conn.execute(
-                "SELECT COALESCE(SUM(amount_ml), 0) as total_ml FROM water_logs WHERE user_id = ? AND DATE(logged_at) = ?",
+                "SELECT COALESCE(SUM(amount_ml), 0) as total_ml "
+                "FROM water_logs "
+                "WHERE user_id = ? AND DATE(logged_at) = ?",
                 (user_id, date_str)
             )
             row = await cursor.fetchone()
             return row["total_ml"] or 0
 
-    async def _aggregate_measurements(self, user_id: int, target_date: date) -> MeasurementsData:
-        """Получает последние замеры тела за день."""
+    async def _aggregate_measurements(
+        self, user_id: int, target_date: date
+    ) -> MeasurementsData:
+        """Получает последние замеры тела."""
         date_str = target_date.isoformat()
         async with self.db.connection() as conn:
             cursor = await conn.execute("""
                 SELECT m.measurement_type_id, m.value, mt.name
                 FROM body_measurements m
-                JOIN measurement_types mt ON m.measurement_type_id = mt.id
+                JOIN measurement_types mt
+                    ON m.measurement_type_id = mt.id
                 WHERE m.user_id = ? AND DATE(m.measured_at) <= ?
                 GROUP BY m.measurement_type_id
                 HAVING DATE(m.measured_at) = MAX(DATE(m.measured_at))
@@ -131,7 +284,9 @@ class DailyAggregator:
                     result.thigh_cm = value
             return result
 
-    def _calculate_derived_metrics(self, agg: DailyAggregate) -> DerivedMetrics:
+    def _calculate_derived_metrics(
+        self, agg: DailyAggregate
+    ) -> DerivedMetrics:
         """Рассчитывает производные метрики."""
         derived = DerivedMetrics()
 
@@ -141,14 +296,18 @@ class DailyAggregator:
                 first = agg.nutrition.first_meal_at
                 last = agg.nutrition.last_meal_at
                 if isinstance(first, str):
-                    first = datetime.fromisoformat(first.replace(" ", "T"))
+                    first = datetime.fromisoformat(
+                        first.replace(" ", "T")
+                    )
                 if isinstance(last, str):
-                    last = datetime.fromisoformat(last.replace(" ", "T"))
+                    last = datetime.fromisoformat(
+                        last.replace(" ", "T")
+                    )
                 window = (last - first).total_seconds() / 3600
                 derived.eating_window_hours = round(window, 1)
                 derived.last_meal_hour = last.hour
-            except Exception as e:
-                logger.warning(f"Error calculating eating window: {e}")
+            except Exception:
+                pass
 
         # Белок на кг
         weight = agg.measurements.weight_kg
@@ -163,14 +322,26 @@ class DailyAggregator:
 
         # Средняя энергия
         if agg.energy.morning and agg.energy.evening:
-            derived.avg_energy = (agg.energy.morning + agg.energy.evening) / 2
+            derived.avg_energy = (
+                agg.energy.morning + agg.energy.evening
+            ) / 2
 
         return derived
 
 
+# ================================================================
+# МОДИФИКАТОРЫ TDEE
+# ================================================================
+
 class ModifierEngine:
     """
     Рассчитывает скорректированный TDEE на основе метрик дня.
+    
+    Научное обоснование:
+    - Sleep: Spiegel et al., Lancet 2004
+    - Stress: Epel et al., Psychosom Med 2000
+    - NEAT: Levine et al., Science 1999
+    - Eating window: Sutton et al., Cell Metabolism 2018
     """
     
     MET_VALUES = {
@@ -178,7 +349,7 @@ class ModifierEngine:
         "cardio": 8.0,
         "yoga": 3.0,
         "walk": 3.5,
-        "swim": 7.0
+        "swim": 7.0,
     }
 
     def __init__(self, db: Database):
@@ -203,37 +374,49 @@ class ModifierEngine:
         missing_metrics = []
 
         # 1. Сон
-        sleep_mod, used, missing = self._calculate_sleep_modifier(aggregated)
+        sleep_mod, used, missing = self._calculate_sleep_modifier(
+            aggregated
+        )
         modifiers["sleep_modifier"] = sleep_mod
         metrics_used.extend(used)
         missing_metrics.extend(missing)
 
         # 2. Энергия
-        energy_mod, used, missing = await self._calculate_energy_modifier(user_id, aggregated, previous_days)
+        energy_mod, used, missing = await self._calculate_energy_modifier(
+            user_id, aggregated, previous_days
+        )
         modifiers["energy_modifier"] = energy_mod
         metrics_used.extend(used)
         missing_metrics.extend(missing)
 
         # 3. Стресс
-        stress_mod, used, missing = self._calculate_stress_modifier(aggregated)
+        stress_mod, used, missing = self._calculate_stress_modifier(
+            aggregated
+        )
         modifiers["stress_modifier"] = stress_mod
         metrics_used.extend(used)
         missing_metrics.extend(missing)
 
         # 4. Активность (NEAT)
-        activity_mod, used, missing = self._calculate_activity_modifier(aggregated)
+        activity_mod, used, missing = self._calculate_activity_modifier(
+            aggregated
+        )
         modifiers["activity_modifier"] = activity_mod
         metrics_used.extend(used)
         missing_metrics.extend(missing)
 
         # 5. Окно питания
-        window_mod, used, missing = self._calculate_window_modifier(aggregated)
+        window_mod, used, missing = self._calculate_window_modifier(
+            aggregated
+        )
         modifiers["window_modifier"] = window_mod
         metrics_used.extend(used)
         missing_metrics.extend(missing)
 
         # 6. Тренировка
-        workout_bonus, used, missing = await self._calculate_workout_bonus(aggregated, user_id)
+        workout_bonus, used, missing = await self._calculate_workout_bonus(
+            aggregated, user_id
+        )
         modifiers["workout_bonus"] = workout_bonus
         metrics_used.extend(used)
         missing_metrics.extend(missing)
@@ -248,15 +431,16 @@ class ModifierEngine:
 
         # Финальный расчёт
         adjusted = base_tdee
-        for key in ["sleep_modifier", "energy_modifier", "stress_modifier",
-                    "activity_modifier", "window_modifier"]:
+        for key in ("sleep_modifier", "energy_modifier", "stress_modifier",
+                     "activity_modifier", "window_modifier"):
             adjusted = int(adjusted * modifiers.get(key, 1.0))
         adjusted += workout_bonus
         aggregated.adjusted_tdee = adjusted
 
         # Confidence
         total = len(metrics_used) + len(missing_metrics)
-        confidence = 100 if total == 0 else int((len(metrics_used) / total) * 100)
+        confidence = (100 if total == 0
+                      else int((len(metrics_used) / total) * 100))
         aggregated.confidence_score = confidence
 
         return adjusted, modifiers, confidence
@@ -333,7 +517,6 @@ class ModifierEngine:
 
         used.append("energy")
 
-        # Одиночный день
         if avg_energy >= 8:
             mod = 1.05
         elif avg_energy >= 6:
@@ -343,19 +526,22 @@ class ModifierEngine:
         else:
             mod = 0.90
 
-        # Учёт длительности дефицита (если есть данные за предыдущие дни)
+        # Хроническая усталость (3+ дня подряд)
         if prev and len(prev) >= 3:
-            low = sum(1 for d in prev[:3] if d.derived.avg_energy and d.derived.avg_energy <= 5)
+            low = sum(
+                1 for d in prev[:3]
+                if d.derived.avg_energy and d.derived.avg_energy <= 5
+            )
             if low >= 3:
                 mod *= 0.95
 
         return round(mod, 3), used, missing
 
     def _calculate_stress_modifier(
-        self, aggregated: DailyAggregate
+        self, agg: DailyAggregate
     ) -> Tuple[float, List[str], List[str]]:
         """Рассчитывает модификатор стресса."""
-        stress = aggregated.stress
+        stress = agg.stress
         used, missing = [], []
 
         if stress is None:
@@ -376,10 +562,10 @@ class ModifierEngine:
         return round(mod, 3), used, missing
 
     def _calculate_activity_modifier(
-        self, aggregated: DailyAggregate
+        self, agg: DailyAggregate
     ) -> Tuple[float, List[str], List[str]]:
         """Рассчитывает модификатор активности (NEAT)."""
-        steps = aggregated.activity.steps
+        steps = agg.activity.steps
         used, missing = [], []
 
         if steps is None:
@@ -404,10 +590,10 @@ class ModifierEngine:
         return round(mod, 3), used, missing
 
     def _calculate_window_modifier(
-        self, aggregated: DailyAggregate
+        self, agg: DailyAggregate
     ) -> Tuple[float, List[str], List[str]]:
         """Рассчитывает модификатор окна питания."""
-        window = aggregated.derived.eating_window_hours
+        window = agg.derived.eating_window_hours
         used, missing = [], []
 
         if window is None:
@@ -430,9 +616,7 @@ class ModifierEngine:
         return round(mod, 3), used, missing
 
     async def _calculate_workout_bonus(
-        self,
-        agg: DailyAggregate,
-        user_id: int
+        self, agg: DailyAggregate, user_id: int
     ) -> Tuple[int, List[str], List[str]]:
         """
         Рассчитывает бонус за тренировку.
@@ -449,10 +633,8 @@ class ModifierEngine:
         used.append("workout_type")
         used.append("workout_duration")
 
-        # MET значение
         met = self.MET_VALUES.get(wtype, 5.0)
 
-        # Интенсивность
         intensity = agg.workout.intensity
         if intensity is not None:
             used.append("workout_intensity")
@@ -460,13 +642,11 @@ class ModifierEngine:
         else:
             intensity_factor = 0.7
 
-        # Вес пользователя
         weight = agg.measurements.weight_kg
         if not weight:
             profile = await self.user_repo.get_profile(user_id)
             weight = profile.get("weight_kg", 70) if profile else 70
 
-        # Расчёт
         duration_h = duration / 60.0
         bonus = int(met * weight * duration_h * intensity_factor * 0.5)
 
