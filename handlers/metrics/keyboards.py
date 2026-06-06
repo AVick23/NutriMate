@@ -5,11 +5,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .constants import (
     CALLBACK_METRICS_TODAY, CALLBACK_METRICS_EDIT, CALLBACK_METRICS_HISTORY,
     CALLBACK_METRICS_ANALYTICS, CALLBACK_METRICS_BACK_TO_DIARY, CALLBACK_METRICS_BACK_TO_MENU,
-    CALLBACK_CONFIRM_ALL,
+    CALLBACK_CONFIRM_ALL, CALLBACK_CANCEL,
     CALLBACK_EDIT_SLEEP, CALLBACK_EDIT_ENERGY_MORNING, CALLBACK_EDIT_ENERGY_EVENING,
     CALLBACK_EDIT_STRESS, CALLBACK_EDIT_STEPS, CALLBACK_EDIT_WORKOUT,
     CALLBACK_ANALYTICS_DAILY, CALLBACK_ANALYTICS_WEEKLY, CALLBACK_ANALYTICS_TRENDS,
-    CALLBACK_BACK_TO_EDIT, CALLBACK_BACK_TO_MAIN,
+    CALLBACK_BACK_TO_EDIT, CALLBACK_BACK_TO_MAIN, CALLBACK_BACK_TO_WORKOUT_TYPE,
     SLEEP_HOURS_QUICK, ENERGY_STRESS_QUICK, STEPS_QUICK,
     WORKOUT_TYPES, WORKOUT_DURATIONS_QUICK,
     EMOJI_SLEEP, EMOJI_ENERGY, EMOJI_STRESS, EMOJI_STEPS, EMOJI_WORKOUT,
@@ -142,28 +142,29 @@ def get_workout_duration_keyboard() -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     buttons.append([InlineKeyboardButton("✏️ Свой вариант", callback_data="duration_custom")])
-    buttons.append([InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)])
+    # Добавляем кнопку "Назад к типу тренировки"
+    buttons.append([InlineKeyboardButton("← Назад к типу", callback_data=CALLBACK_BACK_TO_WORKOUT_TYPE)])
     return InlineKeyboardMarkup(buttons)
 
 
 def get_workout_intensity_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для оценки интенсивности тренировки (RPE)."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1-2", callback_data="intensity_1")],
-        [InlineKeyboardButton("3-4", callback_data="intensity_3")],
-        [InlineKeyboardButton("5-6", callback_data="intensity_5")],
-        [InlineKeyboardButton("7-8", callback_data="intensity_7")],
-        [InlineKeyboardButton("9-10", callback_data="intensity_9")],
+        [InlineKeyboardButton("1-2 (очень легко)", callback_data="intensity_1")],
+        [InlineKeyboardButton("3-4 (легко)", callback_data="intensity_3")],
+        [InlineKeyboardButton("5-6 (умеренно)", callback_data="intensity_5")],
+        [InlineKeyboardButton("7-8 (тяжело)", callback_data="intensity_7")],
+        [InlineKeyboardButton("9-10 (очень тяжело)", callback_data="intensity_9")],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)],
     ])
 
 
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения всех метрик."""
+    """Клавиатура подтверждения всех метрик (добавлена кнопка Отмена)."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Сохранить всё", callback_data=CALLBACK_CONFIRM_ALL)],
         [InlineKeyboardButton("✏️ Редактировать", callback_data=CALLBACK_METRICS_EDIT)],
-        [InlineKeyboardButton("← Отмена", callback_data=CALLBACK_METRICS_BACK_TO_DIARY)],
+        [InlineKeyboardButton("❌ Отмена", callback_data=CALLBACK_CANCEL)],          # добавлено
     ])
 
 

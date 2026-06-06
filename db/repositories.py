@@ -400,7 +400,7 @@ class DailyStatsRepository:
 
 
 # ============================================================
-# НОВЫЕ РЕПОЗИТОРИИ ДЛЯ СИСТЕМЫ МЕТРИК И АНАЛИТИКИ
+# РЕПОЗИТОРИИ ДЛЯ СИСТЕМЫ МЕТРИК И АНАЛИТИКИ
 # ============================================================
 
 class DailyMetricsRepository:
@@ -446,6 +446,10 @@ class DailyMetricsRepository:
                 placeholders.append("?")
                 values.append(value)
         
+        if not fields:
+            logger.warning(f"No valid metrics to save for user {user_id} on {metric_date}")
+            return
+        
         # Добавляем обновление updated_at
         fields.append("updated_at")
         placeholders.append("CURRENT_TIMESTAMP")
@@ -463,6 +467,7 @@ class DailyMetricsRepository:
         
         async with self.db.transaction() as conn:
             await conn.execute(query, values)
+            logger.debug(f"Saved metrics for user {user_id} on {metric_date}")
 
     async def get_metrics(
         self,
@@ -538,6 +543,9 @@ class DailyAggregatesRepository:
                 placeholders.append("?")
                 values.append(value)
         
+        if not fields:
+            return
+        
         values.extend([user_id, aggregate_date.isoformat()])
         
         # Добавляем recomputed_at
@@ -594,43 +602,119 @@ class PatternsRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    async def save_pattern(self, user_id: int, pattern: Dict[str, Any]) -> int:
-        """Сохраняет новый паттерн."""
+    async def init_tables(self) -> None:
+        """Создаёт таблицу для паттернов, если её нет."""
+        async with self.db.connection() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    pattern_type TEXT NOT NULL,
+                    metric_x TEXT NOT NULL,
+                    metric_y TEXT NOT NULL,
+                    correlation_r REAL,
+                    p_value REAL,
+                    lag_days INTEGER DEFAULT 0,
+                    sample_size INTEGER,
+                    effect_text TEXT,
+                    effect_direction TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    first_detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    confirmation_count INTEGER DEFAULT 1,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_patterns_user_active 
+                ON user_patterns(user_id, is_active)
+            """)
+
+    async def save_pattern(self, user_id: int, pattern_data: Dict[str, Any]) -> int:
+        """Сохраняет или обновляет паттерн."""
         async with self.db.transaction() as conn:
+            # Проверяем, существует ли уже такой паттерн
             cursor = await conn.execute("""
-                INSERT INTO user_patterns (
-                    user_id, pattern_type, metric_x, metric_y,
-                    condition_metric, condition_operator, condition_value,
-                    correlation_r, p_value, lag_days, sample_size,
-                    effect_text, effect_direction
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                SELECT id, confirmation_count FROM user_patterns
+                WHERE user_id = ? AND metric_x = ? AND metric_y = ? AND lag_days = ?
             """, (
-                user_id,
-                pattern.get("pattern_type"),
-                pattern.get("metric_x"),
-                pattern.get("metric_y"),
-                pattern.get("condition_metric"),
-                pattern.get("condition_operator"),
-                pattern.get("condition_value"),
-                pattern.get("correlation_r"),
-                pattern.get("p_value"),
-                pattern.get("lag_days", 0),
-                pattern.get("sample_size"),
-                pattern.get("effect_text"),
-                pattern.get("effect_direction"),
+                user_id, 
+                pattern_data.get("metric_x"), 
+                pattern_data.get("metric_y"), 
+                pattern_data.get("lag_days", 0)
             ))
-            return cursor.lastrowid
+            existing = await cursor.fetchone()
+            
+            if existing:
+                # Обновляем существующий
+                await conn.execute("""
+                    UPDATE user_patterns 
+                    SET correlation_r = ?,
+                        p_value = ?,
+                        sample_size = ?,
+                        effect_text = ?,
+                        effect_direction = ?,
+                        last_confirmed_at = CURRENT_TIMESTAMP,
+                        confirmation_count = confirmation_count + 1,
+                        is_active = 1
+                    WHERE id = ?
+                """, (
+                    pattern_data.get("correlation_r"),
+                    pattern_data.get("p_value"),
+                    pattern_data.get("sample_size"),
+                    pattern_data.get("effect_text"),
+                    pattern_data.get("effect_direction"),
+                    existing["id"]
+                ))
+                return existing["id"]
+            else:
+                # Вставляем новый
+                cursor = await conn.execute("""
+                    INSERT INTO user_patterns 
+                    (user_id, pattern_type, metric_x, metric_y, correlation_r, 
+                     p_value, lag_days, sample_size, effect_text, effect_direction)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    user_id,
+                    pattern_data.get("pattern_type"),
+                    pattern_data.get("metric_x"),
+                    pattern_data.get("metric_y"),
+                    pattern_data.get("correlation_r"),
+                    pattern_data.get("p_value"),
+                    pattern_data.get("lag_days", 0),
+                    pattern_data.get("sample_size"),
+                    pattern_data.get("effect_text"),
+                    pattern_data.get("effect_direction")
+                ))
+                return cursor.lastrowid
 
     async def get_active_patterns(self, user_id: int) -> List[Dict[str, Any]]:
         """Получает активные паттерны пользователя."""
         async with self.db.connection() as conn:
             cursor = await conn.execute("""
-                SELECT * FROM user_patterns 
+                SELECT * FROM user_patterns
                 WHERE user_id = ? AND is_active = 1
                 ORDER BY ABS(correlation_r) DESC, confirmation_count DESC
             """, (user_id,))
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def get_pattern_by_id(self, pattern_id: int) -> Optional[Dict[str, Any]]:
+        """Получает паттерн по ID."""
+        async with self.db.connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM user_patterns WHERE id = ?",
+                (pattern_id,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def deactivate_pattern(self, pattern_id: int) -> None:
+        """Деактивирует паттерн."""
+        async with self.db.transaction() as conn:
+            await conn.execute("""
+                UPDATE user_patterns SET is_active = 0 WHERE id = ?
+            """, (pattern_id,))
 
     async def confirm_pattern(self, pattern_id: int) -> None:
         """Подтверждает паттерн (увеличивает счётчик)."""
@@ -642,13 +726,6 @@ class PatternsRepository:
                 WHERE id = ?
             """, (pattern_id,))
 
-    async def deactivate_pattern(self, pattern_id: int) -> None:
-        """Деактивирует паттерн."""
-        async with self.db.transaction() as conn:
-            await conn.execute("""
-                UPDATE user_patterns SET is_active = 0 WHERE id = ?
-            """, (pattern_id,))
-
 
 class ModifierHistoryRepository:
     """
@@ -658,6 +735,32 @@ class ModifierHistoryRepository:
     
     def __init__(self, db: Database):
         self.db = db
+
+    async def init_tables(self) -> None:
+        """Создаёт таблицу для истории модификаторов, если её нет."""
+        async with self.db.connection() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS modifier_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    record_date DATE NOT NULL,
+                    sleep_modifier REAL,
+                    energy_modifier REAL,
+                    stress_modifier REAL,
+                    activity_modifier REAL,
+                    window_modifier REAL,
+                    workout_bonus INTEGER,
+                    adjusted_tdee INTEGER,
+                    metrics_used TEXT,
+                    missing_metrics TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_modifier_history_user_date 
+                ON modifier_history(user_id, record_date)
+            """)
 
     async def save_modifier_history(
         self,
@@ -687,6 +790,22 @@ class ModifierHistoryRepository:
                 json.dumps(data.get("missing_metrics", [])),
             ))
 
+    async def get_modifier_history(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date
+    ) -> List[Dict[str, Any]]:
+        """Получает историю модификаторов за период."""
+        async with self.db.connection() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM modifier_history
+                WHERE user_id = ? AND record_date BETWEEN ? AND ?
+                ORDER BY record_date ASC
+            """, (user_id, start_date.isoformat(), end_date.isoformat()))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
 
 class AnalyticsSettingsRepository:
     """
@@ -696,6 +815,31 @@ class AnalyticsSettingsRepository:
     
     def __init__(self, db: Database):
         self.db = db
+
+    async def init_tables(self) -> None:
+        """Создаёт таблицу для настроек аналитики, если её нет."""
+        async with self.db.connection() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_settings_analytics (
+                    user_id INTEGER PRIMARY KEY,
+                    reminder_morning_enabled BOOLEAN DEFAULT 1,
+                    reminder_morning_time TEXT DEFAULT '08:00',
+                    reminder_evening_enabled BOOLEAN DEFAULT 1,
+                    reminder_evening_time TEXT DEFAULT '21:00',
+                    collect_sleep BOOLEAN DEFAULT 1,
+                    collect_energy BOOLEAN DEFAULT 1,
+                    collect_stress BOOLEAN DEFAULT 1,
+                    collect_steps BOOLEAN DEFAULT 1,
+                    collect_workout BOOLEAN DEFAULT 1,
+                    collect_hunger BOOLEAN DEFAULT 0,
+                    collect_digestion BOOLEAN DEFAULT 0,
+                    collect_cycle BOOLEAN DEFAULT 0,
+                    share_anonymous_stats BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
 
     async def get_settings(self, user_id: int) -> Dict[str, Any]:
         """Получает настройки аналитики для пользователя."""

@@ -39,6 +39,7 @@ CALLBACK_METRICS_BACK_TO_MENU = "metrics_back_to_menu"
 # ============ Callback для навигации ============
 CALLBACK_BACK_TO_EDIT = "back_to_edit"
 CALLBACK_BACK_TO_MAIN = "back_to_main"
+CALLBACK_BACK_TO_WORKOUT_TYPE = "back_to_workout_type"  # добавлено
 
 # ============ Callback для редактирования ============
 CALLBACK_EDIT_SLEEP = "edit_sleep"
@@ -55,7 +56,7 @@ CALLBACK_ANALYTICS_TRENDS = "analytics_trends"
 
 # ============ Callback для подтверждения ============
 CALLBACK_CONFIRM_ALL = "metrics_confirm_all"
-CALLBACK_CANCEL = "metrics_cancel"
+CALLBACK_CANCEL = "metrics_cancel"          # используется в клавиатурах
 
 # ============ Быстрые значения ============
 SLEEP_HOURS_QUICK = [6, 6.5, 7, 7.5, 8, 8.5, 9]
