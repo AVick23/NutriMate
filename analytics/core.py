@@ -1,5 +1,5 @@
 """
-Базовые утилиты, константы и модели данных для аналитики.
+Базовые модели данных и утилиты для аналитики.
 """
 import logging
 import math
@@ -9,39 +9,10 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# ===== КОНСТАНТЫ =====
 
-MIN_CORRELATION = 0.3
-MIN_SAMPLE_SIZE = 14
-P_VALUE_THRESHOLD = 0.05
-LAGS = [0, 1, 3, 5, 7]
-
-# Человекочитаемые названия метрик
-METRIC_NAMES = {
-    "sleep_hours": "продолжительность сна",
-    "sleep_quality": "качество сна",
-    "stress_level": "уровень стресса",
-    "energy_morning": "утренняя энергия",
-    "energy_evening": "вечерняя энергия",
-    "steps": "количество шагов",
-    "total_kcal": "потребление калорий",
-    "total_protein_g": "потребление белка",
-    "water_ml": "потребление воды",
-    "weight_kg": "вес",
-    "waist_cm": "объём талии",
-    "hips_cm": "объём бёдер",
-}
-
-# Названия состояний
-STATE_NAMES = {
-    "metabolic_adaptation": "Метаболическая адаптация",
-    "body_recomposition": "Рекомпозиция тела ✨",
-    "overtraining": "Перетренированность",
-    "stress_plateau": "Стрессовое плато",
-    "insulin_resistance": "Инсулинорезистентность",
-}
-
-# ===== МОДЕЛИ ДАННЫХ =====
+# ================================================================
+# МОДЕЛИ ДАННЫХ
+# ================================================================
 
 @dataclass
 class NutritionData:
@@ -60,7 +31,7 @@ class SleepData:
     """Данные о сне."""
     hours: Optional[float] = None
     quality: Optional[int] = None  # 1-5
-    awakenings: Optional[int] = None  # 0,1,2,3+
+    awakenings: Optional[int] = None  # 0, 1, 2, 3+
 
 
 @dataclass
@@ -71,6 +42,7 @@ class EnergyData:
     
     @property
     def avg(self) -> Optional[float]:
+        """Средняя энергия за день."""
         if self.morning is not None and self.evening is not None:
             return (self.morning + self.evening) / 2
         return None
@@ -104,7 +76,7 @@ class MeasurementsData:
 
 @dataclass
 class DerivedMetrics:
-    """Рассчитанные метрики."""
+    """Производные метрики."""
     eating_window_hours: Optional[float] = None
     last_meal_hour: Optional[int] = None
     protein_per_kg: Optional[float] = None
@@ -117,7 +89,6 @@ class DailyAggregate:
     """Полные агрегированные данные за день."""
     date: date
     user_id: int
-    
     nutrition: NutritionData = field(default_factory=NutritionData)
     water_ml: int = 0
     measurements: MeasurementsData = field(default_factory=MeasurementsData)
@@ -175,7 +146,45 @@ class StateDetection:
     emoji: str
 
 
-# ===== УТИЛИТЫ =====
+# ================================================================
+# КОНСТАНТЫ
+# ================================================================
+
+# Пороги для корреляционного анализа
+MIN_CORRELATION = 0.3
+MIN_SAMPLE_SIZE = 14
+P_VALUE_THRESHOLD = 0.05
+LAGS = [0, 1, 3, 5, 7]
+
+# Человекочитаемые названия метрик
+METRIC_NAMES = {
+    "sleep_hours": "продолжительность сна",
+    "sleep_quality": "качество сна",
+    "stress_level": "уровень стресса",
+    "energy_morning": "утренняя энергия",
+    "energy_evening": "вечерняя энергия",
+    "steps": "количество шагов",
+    "total_kcal": "потребление калорий",
+    "total_protein_g": "потребление белка",
+    "water_ml": "потребление воды",
+    "weight_kg": "вес",
+    "waist_cm": "объём талии",
+    "hips_cm": "объём бёдер",
+}
+
+# Названия состояний
+STATE_NAMES = {
+    "metabolic_adaptation": "Метаболическая адаптация",
+    "body_recomposition": "Рекомпозиция тела ✨",
+    "overtraining": "Перетренированность",
+    "stress_plateau": "Стрессовое плато",
+    "insulin_resistance": "Инсулинорезистентность",
+}
+
+
+# ================================================================
+# УТИЛИТЫ
+# ================================================================
 
 def safe_average(values: List[Any]) -> Optional[float]:
     """
@@ -201,28 +210,28 @@ def pearson_correlation(x: List[float], y: List[float]) -> Tuple[float, float]:
     n = len(x)
     if n < 3:
         return 0.0, 1.0
-    
+
     # Расчёт средних
     mean_x = sum(x) / n
     mean_y = sum(y) / n
-    
+
     # Расчёт ковариации и стандартных отклонений
     numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
     denom_x = math.sqrt(sum((x[i] - mean_x) ** 2 for i in range(n)))
     denom_y = math.sqrt(sum((y[i] - mean_y) ** 2 for i in range(n)))
-    
+
     if denom_x == 0 or denom_y == 0:
         return 0.0, 1.0
-    
+
     r = numerator / (denom_x * denom_y)
-    
+
     # Расчёт p-value через t-распределение
     if abs(r) < 1e-10:
         return r, 1.0
-    
+
     t_stat = r * math.sqrt((n - 2) / (1 - r * r)) if abs(r) < 1 else 100
     df = n - 2
-    
+
     # Упрощённая, но достаточно точная оценка p-value
     if df > 30:
         # Для больших выборок используем нормальное приближение
@@ -239,7 +248,7 @@ def pearson_correlation(x: List[float], y: List[float]) -> Tuple[float, float]:
             p_value = 0.1
         else:
             p_value = 0.5
-    
+
     return r, p_value
 
 
@@ -263,10 +272,10 @@ def get_lagged_pairs(
     """
     x_vals = data.get(metric_x, [])
     y_vals = data.get(metric_y, [])
-    
+
     if not x_vals or not y_vals:
         return [], []
-    
+
     if lag == 0:
         # Синхронная корреляция
         pairs = [(x, y) for x, y in zip(x_vals, y_vals) if x is not None and y is not None]
@@ -278,10 +287,10 @@ def get_lagged_pairs(
             y = y_vals[i + lag]
             if x is not None and y is not None:
                 pairs.append((x, y))
-    
+
     if not pairs:
         return [], []
-    
+
     return [p[0] for p in pairs], [p[1] for p in pairs]
 
 
@@ -295,10 +304,9 @@ def aggregates_to_dict(aggregates: List[DailyAggregate]) -> Dict[str, List[Optio
         "total_kcal", "total_protein_g", "water_ml",
         "weight_kg", "waist_cm"
     ]
-    
     result = {metric: [] for metric in metrics}
     result["date"] = []
-    
+
     for agg in aggregates:
         result["date"].append(agg.date)
         result["sleep_hours"].append(agg.sleep.hours)
@@ -312,7 +320,7 @@ def aggregates_to_dict(aggregates: List[DailyAggregate]) -> Dict[str, List[Optio
         result["water_ml"].append(agg.water_ml)
         result["weight_kg"].append(agg.measurements.weight_kg)
         result["waist_cm"].append(agg.measurements.waist_cm)
-    
+
     return result
 
 
@@ -322,10 +330,9 @@ def generate_effect_text(metric_x: str, metric_y: str, r: float, lag: int) -> st
     """
     x_name = METRIC_NAMES.get(metric_x, metric_x)
     y_name = METRIC_NAMES.get(metric_y, metric_y)
-    
     direction = "увеличивает" if r > 0 else "уменьшает"
     strength = "сильно" if abs(r) > 0.7 else "умеренно" if abs(r) > 0.5 else "слабо"
-    
+
     if lag == 0:
         return f"{x_name} {direction} {y_name} (корреляция {strength})"
     elif lag == 1:
