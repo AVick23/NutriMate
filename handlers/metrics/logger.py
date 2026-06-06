@@ -3,15 +3,22 @@
 """
 import logging
 import json
+import os
 from datetime import datetime
 from typing import Optional, Dict, Any
+
+# Создаём папку для логов, если её нет
+LOG_DIR = "logs"
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR, exist_ok=True)
 
 # Настройка логгера для метрик
 metrics_logger = logging.getLogger("metrics_actions")
 metrics_logger.setLevel(logging.INFO)
 
 # Хэндлер для записи в файл
-file_handler = logging.FileHandler("logs/metrics.log", encoding="utf-8")
+log_file = os.path.join(LOG_DIR, "metrics.log")
+file_handler = logging.FileHandler(log_file, encoding="utf-8")
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 metrics_logger.addHandler(file_handler)
 
