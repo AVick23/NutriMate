@@ -7,25 +7,26 @@
 # Состояния ConversationHandler
 # ============================================================
 (
-    STATE_MAIN_MENU,           # Главное меню метрик
-    STATE_EDIT_MENU,           # Меню редактирования метрик
-    STATE_SLEEP_HOURS,         # Длительность сна
-    STATE_SLEEP_QUALITY,       # Качество сна
-    STATE_SLEEP_AWAKENINGS,    # Пробуждения
-    STATE_ENERGY_MORNING,      # Энергия утром
-    STATE_ENERGY_EVENING,      # Энергия вечером
-    STATE_STRESS,              # Уровень стресса
-    STATE_STEPS,               # Количество шагов
-    STATE_HOURS_ON_FEET,       # Часы на ногах
-    STATE_WORKOUT_TYPE,        # Тип тренировки
-    STATE_WORKOUT_DURATION,    # Длительность тренировки
-    STATE_WORKOUT_INTENSITY,   # Интенсивность тренировки
-    STATE_CONFIRM,             # Подтверждение всех метрик
-    STATE_ANALYTICS,           # Меню аналитики
-    STATE_PATTERNS,            # Просмотр паттернов
-    STATE_FORECAST,            # Прогноз прогресса
-    STATE_BEST_DAY,            # Лучший день
-) = range(18)
+    STATE_MAIN_MENU,           # 0: Главное меню метрик
+    STATE_EDIT_MENU,           # 1: Меню редактирования метрик
+    STATE_SLEEP_HOURS,         # 2: Длительность сна
+    STATE_SLEEP_QUALITY,       # 3: Качество сна
+    STATE_SLEEP_AWAKENINGS,    # 4: Пробуждения
+    STATE_ENERGY_MORNING,      # 5: Энергия утром
+    STATE_ENERGY_EVENING,      # 6: Энергия вечером
+    STATE_STRESS,              # 7: Уровень стресса
+    STATE_STEPS,               # 8: Количество шагов
+    STATE_HOURS_ON_FEET,       # 9: Часы на ногах
+    STATE_WORKOUT_TYPE,        # 10: Тип тренировки
+    STATE_WORKOUT_DURATION,    # 11: Длительность тренировки
+    STATE_WORKOUT_INTENSITY,   # 12: Интенсивность тренировки
+    STATE_CONFIRM,             # 13: Подтверждение всех метрик
+    STATE_ANALYTICS,           # 14: Меню аналитики
+    STATE_PATTERNS,            # 15: Просмотр паттернов
+    STATE_FORECAST,            # 16: Прогноз прогресса
+    STATE_BEST_DAY,            # 17: Лучший день
+    STATE_STATES,              # 18: Физиологические состояния
+) = range(19)
 
 # ============================================================
 # Типы сессий
@@ -70,10 +71,10 @@ CALLBACK_EDIT_WORKOUT = "edit_workout"
 CALLBACK_ANALYTICS_DAILY = "analytics_daily"
 CALLBACK_ANALYTICS_WEEKLY = "analytics_weekly"
 CALLBACK_ANALYTICS_TRENDS = "analytics_trends"
-CALLBACK_ANALYTICS_PATTERNS = "analytics_patterns"     # НОВОЕ
-CALLBACK_ANALYTICS_FORECAST = "analytics_forecast"     # НОВОЕ
-CALLBACK_ANALYTICS_BEST_DAY = "analytics_best_day"     # НОВОЕ
-CALLBACK_ANALYTICS_STATES = "analytics_states"         # НОВОЕ
+CALLBACK_ANALYTICS_PATTERNS = "analytics_patterns"
+CALLBACK_ANALYTICS_FORECAST = "analytics_forecast"
+CALLBACK_ANALYTICS_BEST_DAY = "analytics_best_day"
+CALLBACK_ANALYTICS_STATES = "analytics_states"
 
 # ============================================================
 # Callback для подтверждения

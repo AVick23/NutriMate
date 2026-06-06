@@ -519,7 +519,12 @@ def get_default_metrics() -> Dict[str, Any]:
 
 
 def get_session_type_by_hour() -> Optional[str]:
-    """Определяет, утренняя или вечерняя сейчас сессия."""
+    """
+    Определяет, утренняя или вечерняя сейчас сессия.
+    Утро: 5:00 - 12:00
+    Вечер: 18:00 - 23:00
+    В остальное время возвращает None.
+    """
     hour = datetime.now().hour
     if 5 <= hour < 12:
         return "morning"
@@ -529,7 +534,9 @@ def get_session_type_by_hour() -> Optional[str]:
 
 
 def split_long_message(text: str, max_length: int = 4000) -> list:
-    """Разбивает длинное сообщение на части для отправки."""
+    """
+    Разбивает длинное сообщение на части для отправки.
+    """
     if len(text) <= max_length:
         return [text]
     
@@ -550,60 +557,3 @@ def split_long_message(text: str, max_length: int = 4000) -> list:
         parts.append(current_part)
     
     return parts
-
-
-def format_waist_risk_message(measurement_name: str, value: float, gender: str) -> str:
-    """Форматирует сообщение с риском по талии (ВОЗ)."""
-    if measurement_name != "waist":
-        return ""
-    
-    risk = get_waist_risk_category(value, gender)
-    return f"\n\n{risk['color']} <b>Оценка риска ВОЗ:</b> {risk['category']}\n{risk['message']}"
-
-
-def get_waist_risk_category(waist_cm: float, gender: str) -> dict:
-    """Оценивает риск для здоровья по окружности талии (ВОЗ)."""
-    if gender == "male":
-        if waist_cm < 94:
-            return {
-                "category": "Норма",
-                "risk": "Низкий",
-                "color": "🟢",
-                "message": "Твоя талия в пределах нормы. Отличный результат!"
-            }
-        elif waist_cm < 102:
-            return {
-                "category": "Повышенная",
-                "risk": "Средний",
-                "color": "🟡",
-                "message": "Талия превышает норму. Повышенный риск ССЗ."
-            }
-        else:
-            return {
-                "category": "Высокая",
-                "risk": "Высокий",
-                "color": "🔴",
-                "message": "Талия значительно превышает норму! Консультация врача."
-            }
-    else:
-        if waist_cm < 80:
-            return {
-                "category": "Норма",
-                "risk": "Низкий",
-                "color": "🟢",
-                "message": "Твоя талия в пределах нормы. Отличный результат!"
-            }
-        elif waist_cm < 88:
-            return {
-                "category": "Повышенная",
-                "risk": "Средний",
-                "color": "🟡",
-                "message": "Талия превышает норму. Повышенный риск ССЗ."
-            }
-        else:
-            return {
-                "category": "Высокая",
-                "risk": "Высокий",
-                "color": "🔴",
-                "message": "Талия значительно превышает норму! Консультация врача."
-            }

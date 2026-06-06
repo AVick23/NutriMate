@@ -20,6 +20,7 @@ from .utils import (
     format_states, format_macro_balance, format_forecast,
     format_best_day, format_tdee_modifiers, state_name_ru,
 )
+from .logger import log_metrics_action
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,8 @@ class MetricsHandlers:
                 reply_markup=get_metrics_main_keyboard(),
                 parse_mode="HTML"
             )
+
+        log_metrics_action(user_id, "open_menu")
         return STATE_MAIN_MENU
 
     async def handle_main_menu(
@@ -146,6 +149,7 @@ class MetricsHandlers:
         user_id = await self.user_repo.get_user_id(update.effective_user.id)
 
         if data == CALLBACK_METRICS_BACK_TO_DIARY:
+            log_metrics_action(user_id, "back_to_diary_from_menu")
             return await self._back_to_diary(update, context)
 
         if data == CALLBACK_METRICS_TODAY:
@@ -158,12 +162,14 @@ class MetricsHandlers:
                         "⚠️ Метрики за сегодня уже заполнены. Используй 'Редактировать'.",
                         show_alert=True
                     )
+                    log_metrics_action(user_id, "metrics_already_filled", status="skipped")
                     return STATE_MAIN_MENU
             except Exception as e:
                 logger.warning(f"Error checking existing metrics: {e}")
 
             self._clear_metrics(context)
             self._set_session_mode(context, SESSION_FULL)
+            log_metrics_action(user_id, "start_full_session")
             return await self._start_sleep_input(update, context)
 
         if data == CALLBACK_METRICS_EDIT:
@@ -177,16 +183,22 @@ class MetricsHandlers:
             if existing and any(v is not None for v in existing.values()):
                 self._save_today_metrics(context, dict(existing))
                 self._set_session_mode(context, SESSION_EDIT)
+                log_metrics_action(user_id, "start_edit_session", {
+                    "metrics_count": sum(1 for v in existing.values() if v is not None)
+                })
                 return await self._show_edit_menu(update, context)
             else:
                 await query.answer("Нет сохранённых метрик за сегодня", show_alert=True)
                 self._set_session_mode(context, SESSION_FULL)
+                log_metrics_action(user_id, "edit_no_existing", status="skipped")
                 return await self._start_sleep_input(update, context)
 
         if data == CALLBACK_METRICS_ANALYTICS:
+            log_metrics_action(user_id, "open_analytics")
             return await self._show_analytics_menu(update, context)
 
         if data == CALLBACK_METRICS_HISTORY:
+            log_metrics_action(user_id, "open_history")
             text = "📊 <b>История метрик</b>\n\nФункция в разработке. Скоро появится! 🚀"
             await self._safe_edit_message(
                 query,
@@ -243,18 +255,25 @@ class MetricsHandlers:
         user_id = await self.user_repo.get_user_id(user.id)
 
         if data == CALLBACK_ANALYTICS_DAILY:
+            log_metrics_action(user_id, "view_daily_analytics")
             return await self._show_daily_analytics(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_WEEKLY:
+            log_metrics_action(user_id, "view_weekly_analytics")
             return await self._show_weekly_analytics(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_TRENDS:
+            log_metrics_action(user_id, "view_trends_analytics")
             return await self._show_trends_analytics(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_PATTERNS:
+            log_metrics_action(user_id, "view_patterns")
             return await self._show_patterns(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_FORECAST:
+            log_metrics_action(user_id, "view_forecast")
             return await self._show_forecast(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_BEST_DAY:
+            log_metrics_action(user_id, "view_best_day")
             return await self._show_best_day(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_STATES:
+            log_metrics_action(user_id, "view_states")
             return await self._show_states(update, context, user_id)
         elif data == CALLBACK_METRICS_BACK_TO_MENU:
             return await self.show_metrics_menu(update, context)
@@ -281,6 +300,7 @@ class MetricsHandlers:
 
             aggregated = await aggregator.aggregate(user_id, yesterday)
             profile = await self.user_repo.get_profile(user_id)
+            # ИСПРАВЛЕНО: безопасное получение daily_kcal
             base_tdee = profile.get("daily_kcal", 2000) if profile else 2000
 
             adjusted_tdee, modifiers, confidence = await modifier_engine.calculate_adjusted_tdee(
@@ -290,6 +310,7 @@ class MetricsHandlers:
 
         except Exception as e:
             logger.error(f"Analytics error: {e}", exc_info=True)
+            log_metrics_action(user_id, "daily_analytics_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при расчёте аналитики. Попробуйте позже.",
@@ -320,11 +341,11 @@ class MetricsHandlers:
         if aggregated.derived.eating_window_hours:
             text += f"⏰ Окно питания: {aggregated.derived.eating_window_hours:.0f} ч\n"
 
-        # Баланс БЖУ (НОВОЕ)
+        # Баланс БЖУ
         text += "\n─────────────────\n"
         text += format_macro_balance(aggregated)
 
-        # TDEE с модификаторами (НОВОЕ)
+        # TDEE с модификаторами
         text += "\n\n─────────────────\n"
         text += format_tdee_modifiers(aggregated, base_tdee)
 
@@ -349,10 +370,11 @@ class MetricsHandlers:
             if i == 0:
                 await self._safe_edit_message(
                     query, part,
-                    get_back_keyboard(CALLBACK_BACK_TO_ANALYTICS)
+                    get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_ANALYTICS
 
     # ================================================================
@@ -375,6 +397,7 @@ class MetricsHandlers:
             report = report.replace("━" * 25, "─────────────────")
         except Exception as e:
             logger.error(f"Weekly analytics error: {e}", exc_info=True)
+            log_metrics_action(user_id, "weekly_analytics_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при формировании отчёта. Попробуйте позже.",
@@ -387,10 +410,11 @@ class MetricsHandlers:
             if i == 0:
                 await self._safe_edit_message(
                     query, part,
-                    get_back_keyboard(CALLBACK_BACK_TO_ANALYTICS)
+                    get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_ANALYTICS
 
     # ================================================================
@@ -419,12 +443,12 @@ class MetricsHandlers:
                     agg = await aggregator.aggregate(user_id, current_date)
                     aggregates.append(agg)
 
-            profile = await self.user_repo.get_user_id(user_id)
-            profile_data = await self.user_repo.get_profile(user_id) if profile else {}
-            states = state_detector.detect_states(aggregates, profile_data)
+            profile = await self.user_repo.get_profile(user_id) or {}
+            states = state_detector.detect_states(aggregates, profile)
 
         except Exception as e:
             logger.error(f"Trends analytics error: {e}", exc_info=True)
+            log_metrics_action(user_id, "trends_analytics_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при расчёте трендов. Попробуйте позже.",
@@ -492,14 +516,15 @@ class MetricsHandlers:
             if i == 0:
                 await self._safe_edit_message(
                     query, part,
-                    get_back_keyboard(CALLBACK_BACK_TO_ANALYTICS)
+                    get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_ANALYTICS
 
     # ================================================================
-    # ПАТТЕРНЫ (НОВОЕ)
+    # ПАТТЕРНЫ
     # ================================================================
 
     async def _show_patterns(
@@ -530,6 +555,7 @@ class MetricsHandlers:
 
         except Exception as e:
             logger.error(f"Patterns error: {e}", exc_info=True)
+            log_metrics_action(user_id, "patterns_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при анализе паттернов.",
@@ -554,10 +580,11 @@ class MetricsHandlers:
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_PATTERNS
 
     # ================================================================
-    # ПРОГНОЗ (НОВОЕ)
+    # ПРОГНОЗ
     # ================================================================
 
     async def _show_forecast(
@@ -586,6 +613,7 @@ class MetricsHandlers:
 
         except Exception as e:
             logger.error(f"Forecast error: {e}", exc_info=True)
+            log_metrics_action(user_id, "forecast_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при расчёте прогноза.",
@@ -606,10 +634,11 @@ class MetricsHandlers:
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_FORECAST
 
     # ================================================================
-    # ЛУЧШИЙ ДЕНЬ (НОВОЕ)
+    # ЛУЧШИЙ ДЕНЬ
     # ================================================================
 
     async def _show_best_day(
@@ -636,6 +665,7 @@ class MetricsHandlers:
 
         except Exception as e:
             logger.error(f"Best day error: {e}", exc_info=True)
+            log_metrics_action(user_id, "best_day_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при анализе лучшего дня.",
@@ -656,10 +686,11 @@ class MetricsHandlers:
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
+
         return STATE_BEST_DAY
 
     # ================================================================
-    # СОСТОЯНИЯ (НОВОЕ)
+    # СОСТОЯНИЯ
     # ================================================================
 
     async def _show_states(
@@ -690,6 +721,7 @@ class MetricsHandlers:
 
         except Exception as e:
             logger.error(f"States error: {e}", exc_info=True)
+            log_metrics_action(user_id, "states_error", {"error": str(e)}, status="error")
             await self._safe_edit_message(
                 query,
                 "⚠️ Произошла ошибка при анализе состояний.",
@@ -714,7 +746,9 @@ class MetricsHandlers:
                 )
             else:
                 await query.message.reply_text(part, parse_mode="HTML")
-        return STATE_PATTERNS  # Используем существующее состояние
+
+        # ИСПРАВЛЕНО: возврат в STATE_ANALYTICS вместо STATE_PATTERNS
+        return STATE_ANALYTICS
 
     # ================================================================
     # ОБРАБОТКА РЕДАКТИРОВАНИЯ
@@ -725,6 +759,7 @@ class MetricsHandlers:
     ) -> int:
         """Обрабатывает выбор параметра для редактирования."""
         query = update.callback_query
+        logger.info(f"🔔 handle_edit_actions called with data: {query.data}")
         await query.answer()
 
         data = query.data
@@ -749,36 +784,42 @@ class MetricsHandlers:
         return STATE_EDIT_MENU
 
     async def _edit_sleep(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование сна."""
         query = update.callback_query
         text = f"{EMOJI_SLEEP} <b>Редактирование сна</b>\n\nСколько часов ты спал?"
         await self._safe_edit_message(query, text, get_sleep_keyboard())
         return STATE_SLEEP_HOURS
 
     async def _edit_energy_morning(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование энергии утром."""
         query = update.callback_query
         text = f"{EMOJI_ENERGY} <b>Редактирование энергии утром</b>\n\nОцени энергию от 1 до 10:"
         await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_energy_morning"))
         return STATE_ENERGY_MORNING
 
     async def _edit_energy_evening(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование энергии вечером."""
         query = update.callback_query
         text = f"{EMOJI_ENERGY} <b>Редактирование энергии вечером</b>\n\nОцени энергию от 1 до 10:"
         await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_energy_evening"))
         return STATE_ENERGY_EVENING
 
     async def _edit_stress(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование стресса."""
         query = update.callback_query
         text = f"{EMOJI_STRESS} <b>Редактирование стресса</b>\n\nОцени уровень стресса от 1 до 10:"
         await self._safe_edit_message(query, text, get_energy_stress_keyboard("edit_stress"))
         return STATE_STRESS
 
     async def _edit_steps(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование шагов."""
         query = update.callback_query
         text = f"{EMOJI_STEPS} <b>Редактирование шагов</b>\n\nСколько шагов ты прошёл?"
         await self._safe_edit_message(query, text, get_steps_keyboard())
         return STATE_STEPS
 
     async def _edit_workout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Редактирование тренировки."""
         query = update.callback_query
         text = f"{EMOJI_WORKOUT} <b>Редактирование тренировки</b>\n\nКакая была тренировка?"
         await self._safe_edit_message(query, text, get_workout_type_keyboard())
@@ -816,12 +857,13 @@ class MetricsHandlers:
         return await self._show_analytics_menu(update, context)
 
     # ================================================================
-    # ПОШАГОВЫЙ СБОР МЕТРИК (без изменений)
+    # ПОШАГОВЫЙ СБОР МЕТРИК
     # ================================================================
 
     async def _start_sleep_input(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
+        """Начинает опрос с вопроса о сне."""
         query = update.callback_query
         if query:
             await query.answer()
@@ -837,329 +879,564 @@ class MetricsHandlers:
     async def process_sleep_hours(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
+        """Обрабатывает ввод длительности сна."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
 
+            # Кнопка "Свой вариант"
             if data == "sleep_custom":
                 context.user_data["awaiting_custom_input"] = "sleep_hours"
                 await self._safe_edit_message(query, "✏️ Введи количество часов (например: 7.5 или 8):")
                 return STATE_SLEEP_HOURS
 
+            # Готовые кнопки (sleep_6, sleep_6.5, sleep_7, ...)
             if data.startswith("sleep_"):
                 try:
                     hours = float(data.replace("sleep_", ""))
+                    # ВАЛИДАЦИЯ
                     if hours < 0 or hours > 24:
                         raise ValueError
+
                     self._update_metric(context, "sleep_hours", hours)
                     context.user_data.pop("awaiting_custom_input", None)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "sleep_hours", "value": hours, "input": "button"}
+                    )
                     return await self._ask_sleep_quality(update, context)
                 except ValueError:
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric_error",
+                        {"metric": "sleep_hours", "error": "invalid_value"},
+                        status="error"
+                    )
                     await self._send_error_message(update, "❌ Ошибка: неверное значение (0-24).")
                     return STATE_SLEEP_HOURS
 
         elif update.message:
+            # Текстовый ввод (для sleep_custom)
             try:
                 hours = float(update.message.text.strip().replace(",", "."))
                 if hours < 0 or hours > 24:
                     raise ValueError
+
                 self._update_metric(context, "sleep_hours", hours)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "sleep_hours", "value": hours, "input": "text"}
+                )
                 return await self._ask_sleep_quality(update, context)
             except ValueError:
-                await update.message.reply_text("❌ Введи число от 0 до 24. Например: 7.5", parse_mode="HTML")
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric_error",
+                    {"metric": "sleep_hours", "error": "invalid_text"},
+                    status="error"
+                )
+                await update.message.reply_text(
+                    "❌ Введи число от 0 до 24. Например: 7.5",
+                    parse_mode="HTML"
+                )
                 return STATE_SLEEP_HOURS
 
         return STATE_SLEEP_HOURS
 
-    async def _ask_sleep_quality(self, update, context) -> int:
+    async def _ask_sleep_quality(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает качество сна."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_SLEEP} <b>Оцени качество сна</b> (1 — очень плохо, 5 — отлично):"
+
         if query:
             await self._safe_edit_message(query, text, get_sleep_quality_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_sleep_quality_keyboard(), parse_mode="HTML")
         return STATE_SLEEP_QUALITY
 
-    async def process_sleep_quality(self, update, context) -> int:
+    async def process_sleep_quality(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает оценку качества сна."""
         query = update.callback_query
         await query.answer()
+
         data = query.data
         if data.startswith("quality_"):
             try:
                 quality = int(data.replace("quality_", ""))
                 if quality < 1 or quality > 5:
                     raise ValueError
+
                 self._update_metric(context, "sleep_quality", quality)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "sleep_quality", "value": quality}
+                )
                 return await self._ask_sleep_awakenings(update, context)
             except ValueError:
                 await self._send_error_message(update, "❌ Значение должно быть от 1 до 5.")
                 return STATE_SLEEP_QUALITY
+
         return STATE_SLEEP_QUALITY
 
-    async def _ask_sleep_awakenings(self, update, context) -> int:
+    async def _ask_sleep_awakenings(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает количество пробуждений."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_SLEEP} <b>Сколько раз ты просыпался за ночь?</b>"
+
         if query:
             await self._safe_edit_message(query, text, get_awakenings_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_awakenings_keyboard(), parse_mode="HTML")
         return STATE_SLEEP_AWAKENINGS
 
-    async def process_sleep_awakenings(self, update, context) -> int:
+    async def process_sleep_awakenings(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает количество пробуждений."""
         query = update.callback_query
         await query.answer()
+
         data = query.data
         if data.startswith("awakenings_"):
             try:
                 awakenings = int(data.replace("awakenings_", ""))
                 self._update_metric(context, "sleep_awakenings", awakenings)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "sleep_awakenings", "value": awakenings}
+                )
                 return await self._ask_energy_morning(update, context)
             except ValueError:
                 await self._send_error_message(update, "❌ Ошибка значения.")
                 return STATE_SLEEP_AWAKENINGS
+
         return STATE_SLEEP_AWAKENINGS
 
-    async def _ask_energy_morning(self, update, context) -> int:
+    async def _ask_energy_morning(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает энергию утром."""
         query = update.callback_query
         if query:
             await query.answer()
+
         prefix = "edit_energy_morning" if self._is_edit_mode(context) else "energy_morning"
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя сейчас?</b>\n\nОцени энергию от 1 до 10:"
+
         if query:
             await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(text, reply_markup=get_energy_stress_keyboard(prefix), parse_mode="HTML")
         return STATE_ENERGY_MORNING
 
-    async def process_energy_morning(self, update, context) -> int:
+    async def process_energy_morning(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает оценку энергии утром."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
             if data.startswith("energy_morning_"):
                 try:
                     value = int(data.replace("energy_morning_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "energy_morning", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "energy_morning", "value": value}
+                    )
+
                     if self._is_edit_mode(context):
                         return await self._show_edit_menu(update, context)
                     return await self._ask_energy_evening(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_ENERGY_MORNING
+
             elif data.startswith("edit_energy_morning_"):
                 try:
                     value = int(data.replace("edit_energy_morning_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "energy_morning", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "energy_morning", "value": value, "mode": "edit"}
+                    )
                     return await self._show_edit_menu(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_ENERGY_MORNING
+
         return STATE_ENERGY_MORNING
 
-    async def _ask_energy_evening(self, update, context) -> int:
+    async def _ask_energy_evening(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает энергию вечером."""
         query = update.callback_query
         if query:
             await query.answer()
+
         prefix = "edit_energy_evening" if self._is_edit_mode(context) else "energy_evening"
         text = f"{EMOJI_ENERGY} <b>Как чувствуешь себя вечером?</b>\n\nОцени энергию от 1 до 10:"
+
         if query:
             await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(text, reply_markup=get_energy_stress_keyboard(prefix), parse_mode="HTML")
         return STATE_ENERGY_EVENING
 
-    async def process_energy_evening(self, update, context) -> int:
+    async def process_energy_evening(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает оценку энергии вечером."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
             if data.startswith("energy_evening_"):
                 try:
                     value = int(data.replace("energy_evening_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "energy_evening", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "energy_evening", "value": value}
+                    )
+
                     if self._is_edit_mode(context):
                         return await self._show_edit_menu(update, context)
                     return await self._ask_stress(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_ENERGY_EVENING
+
             elif data.startswith("edit_energy_evening_"):
                 try:
                     value = int(data.replace("edit_energy_evening_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "energy_evening", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "energy_evening", "value": value, "mode": "edit"}
+                    )
                     return await self._show_edit_menu(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_ENERGY_EVENING
+
         return STATE_ENERGY_EVENING
 
-    async def _ask_stress(self, update, context) -> int:
+    async def _ask_stress(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает уровень стресса."""
         query = update.callback_query
         if query:
             await query.answer()
+
         prefix = "edit_stress" if self._is_edit_mode(context) else "stress"
         text = f"{EMOJI_STRESS} <b>Оцени уровень стресса за сегодня</b> (1 — спокоен, 10 — очень напряжён):"
+
         if query:
             await self._safe_edit_message(query, text, get_energy_stress_keyboard(prefix))
         else:
             await update.message.reply_text(text, reply_markup=get_energy_stress_keyboard(prefix), parse_mode="HTML")
         return STATE_STRESS
 
-    async def process_stress(self, update, context) -> int:
+    async def process_stress(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает оценку стресса."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
             if data.startswith("stress_"):
                 try:
                     value = int(data.replace("stress_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "stress_level", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "stress_level", "value": value}
+                    )
+
                     if self._is_edit_mode(context):
                         return await self._show_edit_menu(update, context)
                     return await self._ask_steps(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_STRESS
+
             elif data.startswith("edit_stress_"):
                 try:
                     value = int(data.replace("edit_stress_", ""))
                     if value < 1 or value > 10:
                         raise ValueError
+
                     self._update_metric(context, "stress_level", value)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "stress_level", "value": value, "mode": "edit"}
+                    )
                     return await self._show_edit_menu(update, context)
                 except ValueError:
                     await self._send_error_message(update, "❌ Значение должно быть от 1 до 10.")
                     return STATE_STRESS
+
         return STATE_STRESS
 
-    async def _ask_steps(self, update, context) -> int:
+    async def _ask_steps(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает количество шагов."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_STEPS} <b>Сколько шагов ты прошёл сегодня?</b>"
+
         if query:
             await self._safe_edit_message(query, text, get_steps_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_steps_keyboard(), parse_mode="HTML")
         return STATE_STEPS
 
-    async def process_steps(self, update, context) -> int:
+    async def process_steps(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод количества шагов."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
             if data == "steps_custom":
                 context.user_data["awaiting_custom_input"] = "steps"
                 await self._safe_edit_message(query, "✏️ Введи количество шагов (например: 8500):")
                 return STATE_STEPS
+
+            # Кнопки steps_2000, steps_3000, ...
             if data.startswith("steps_"):
                 try:
                     steps = int(data.replace("steps_", ""))
                     if steps < 0 or steps > 100000:
                         raise ValueError
+
                     self._update_metric(context, "steps", steps)
                     context.user_data.pop("awaiting_custom_input", None)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "steps", "value": steps, "input": "button"}
+                    )
+
                     if self._is_edit_mode(context):
                         return await self._show_edit_menu(update, context)
                     return await self._ask_hours_on_feet(update, context)
                 except ValueError:
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric_error",
+                        {"metric": "steps", "error": "invalid_value"},
+                        status="error"
+                    )
                     await self._send_error_message(update, "❌ Шаги должны быть от 0 до 100000.")
                     return STATE_STEPS
+
         elif update.message:
             try:
                 steps = int(update.message.text.strip())
                 if steps < 0 or steps > 100000:
                     raise ValueError
+
                 self._update_metric(context, "steps", steps)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "steps", "value": steps, "input": "text"}
+                )
+
                 if self._is_edit_mode(context):
                     return await self._show_edit_menu(update, context)
                 return await self._ask_hours_on_feet(update, context)
             except ValueError:
-                await update.message.reply_text("❌ Введи число от 0 до 100000.", parse_mode="HTML")
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric_error",
+                    {"metric": "steps", "error": "invalid_text"},
+                    status="error"
+                )
+                await update.message.reply_text(
+                    "❌ Введи число от 0 до 100000.",
+                    parse_mode="HTML"
+                )
                 return STATE_STEPS
+
         return STATE_STEPS
 
-    async def _ask_hours_on_feet(self, update, context) -> int:
+    async def _ask_hours_on_feet(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает количество часов на ногах."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_STEPS} <b>Сколько часов ты провёл на ногах?</b>\n(не считая тренировок)"
+
         if query:
             await self._safe_edit_message(query, text, get_hours_on_feet_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_hours_on_feet_keyboard(), parse_mode="HTML")
         return STATE_HOURS_ON_FEET
 
-    async def process_hours_on_feet(self, update, context) -> int:
+    async def process_hours_on_feet(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод часов на ногах."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
             if data == "feet_custom":
                 context.user_data["awaiting_custom_input"] = "hours_on_feet"
                 await self._safe_edit_message(query, "✏️ Введи количество часов (например: 4.5):")
                 return STATE_HOURS_ON_FEET
+
+            # Кнопки feet_1, feet_3, ...
             if data.startswith("feet_"):
                 try:
                     hours = float(data.replace("feet_", ""))
                     if hours < 0 or hours > 24:
                         raise ValueError
+
                     self._update_metric(context, "hours_on_feet", hours)
                     context.user_data.pop("awaiting_custom_input", None)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "hours_on_feet", "value": hours, "input": "button"}
+                    )
+
                     if self._is_edit_mode(context):
                         return await self._show_edit_menu(update, context)
                     return await self._ask_workout_type(update, context)
                 except ValueError:
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric_error",
+                        {"metric": "hours_on_feet", "error": "invalid_value"},
+                        status="error"
+                    )
                     await self._send_error_message(update, "❌ Часы должны быть от 0 до 24.")
                     return STATE_HOURS_ON_FEET
+
         elif update.message:
             try:
                 hours = float(update.message.text.strip().replace(",", "."))
                 if hours < 0 or hours > 24:
                     raise ValueError
+
                 self._update_metric(context, "hours_on_feet", hours)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "hours_on_feet", "value": hours, "input": "text"}
+                )
+
                 if self._is_edit_mode(context):
                     return await self._show_edit_menu(update, context)
                 return await self._ask_workout_type(update, context)
             except ValueError:
-                await update.message.reply_text("❌ Введи число от 0 до 24.", parse_mode="HTML")
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric_error",
+                    {"metric": "hours_on_feet", "error": "invalid_text"},
+                    status="error"
+                )
+                await update.message.reply_text(
+                    "❌ Введи число от 0 до 24.",
+                    parse_mode="HTML"
+                )
                 return STATE_HOURS_ON_FEET
+
         return STATE_HOURS_ON_FEET
 
-    async def _ask_workout_type(self, update, context) -> int:
+    async def _ask_workout_type(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает тип тренировки."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_WORKOUT} <b>Была ли у тебя тренировка сегодня?</b>"
+
         if query:
             await self._safe_edit_message(query, text, get_workout_type_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_workout_type_keyboard(), parse_mode="HTML")
         return STATE_WORKOUT_TYPE
 
-    async def process_workout_type(self, update, context) -> int:
+    async def process_workout_type(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает выбор типа тренировки."""
         query = update.callback_query
         await query.answer()
+
         data = query.data
         if data.startswith("workout_type_"):
             workout_type = data.replace("workout_type_", "")
             self._update_metric(context, "workout_type", workout_type)
+            log_metrics_action(
+                update.effective_user.id,
+                "save_metric",
+                {"metric": "workout_type", "value": workout_type}
+            )
+
             if workout_type == "none":
+                # Сбрасываем остальные поля тренировки
                 self._update_metric(context, "workout_duration", None)
                 self._update_metric(context, "workout_intensity", None)
                 if self._is_edit_mode(context):
@@ -1167,68 +1444,122 @@ class MetricsHandlers:
                 return await self._show_confirm(update, context)
             else:
                 return await self._ask_workout_duration(update, context)
+
         return STATE_WORKOUT_TYPE
 
-    async def _ask_workout_duration(self, update, context) -> int:
+    async def _ask_workout_duration(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает длительность тренировки."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_WORKOUT} <b>Сколько минут длилась тренировка?</b>"
+
         if query:
             await self._safe_edit_message(query, text, get_workout_duration_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_workout_duration_keyboard(), parse_mode="HTML")
         return STATE_WORKOUT_DURATION
 
-    async def process_workout_duration(self, update, context) -> int:
+    async def process_workout_duration(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает ввод длительности тренировки."""
         if update.callback_query:
             query = update.callback_query
             await query.answer()
             data = query.data
+
+            # Кнопка "Свой вариант"
             if data == "duration_custom":
                 context.user_data["awaiting_custom_input"] = "workout_duration"
                 await self._safe_edit_message(query, "✏️ Введи длительность в минутах (например: 45):")
                 return STATE_WORKOUT_DURATION
+
+            # Обработка кнопки "Назад к типу"
             if data == CALLBACK_BACK_TO_WORKOUT_TYPE or data == "back_to_workout_type":
                 return await self._ask_workout_type(update, context)
+
+            # Готовые кнопки длительности
             if data.startswith("workout_duration_"):
                 try:
                     duration = int(data.replace("workout_duration_", ""))
                     if duration <= 0 or duration > 480:
                         raise ValueError
+
                     self._update_metric(context, "workout_duration", duration)
                     context.user_data.pop("awaiting_custom_input", None)
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric",
+                        {"metric": "workout_duration", "value": duration, "input": "button"}
+                    )
                     return await self._ask_workout_intensity(update, context)
                 except ValueError:
+                    log_metrics_action(
+                        update.effective_user.id,
+                        "save_metric_error",
+                        {"metric": "workout_duration", "error": "invalid_value"},
+                        status="error"
+                    )
                     await self._send_error_message(update, "❌ Длительность должна быть от 1 до 480 минут.")
                     return STATE_WORKOUT_DURATION
+
         elif update.message:
             try:
                 duration = int(update.message.text.strip())
                 if duration <= 0 or duration > 480:
                     raise ValueError
+
                 self._update_metric(context, "workout_duration", duration)
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric",
+                    {"metric": "workout_duration", "value": duration, "input": "text"}
+                )
                 return await self._ask_workout_intensity(update, context)
             except ValueError:
-                await update.message.reply_text("❌ Введи число от 1 до 480 минут.", parse_mode="HTML")
+                log_metrics_action(
+                    update.effective_user.id,
+                    "save_metric_error",
+                    {"metric": "workout_duration", "error": "invalid_text"},
+                    status="error"
+                )
+                await update.message.reply_text(
+                    "❌ Введи число от 1 до 480 минут.",
+                    parse_mode="HTML"
+                )
                 return STATE_WORKOUT_DURATION
+
         return STATE_WORKOUT_DURATION
 
-    async def _ask_workout_intensity(self, update, context) -> int:
+    async def _ask_workout_intensity(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Спрашивает интенсивность тренировки."""
         query = update.callback_query
         if query:
             await query.answer()
+
         text = f"{EMOJI_WORKOUT} <b>Оцени интенсивность тренировки</b> (RPE 1-10):"
+
         if query:
             await self._safe_edit_message(query, text, get_workout_intensity_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_workout_intensity_keyboard(), parse_mode="HTML")
         return STATE_WORKOUT_INTENSITY
 
-    async def process_workout_intensity(self, update, context) -> int:
+    async def process_workout_intensity(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Обрабатывает оценку интенсивности."""
         query = update.callback_query
         await query.answer()
+
         data = query.data
+        # Маппинг диапазонов в средние значения RPE
         intensity_map = {
             "intensity_1": 2,
             "intensity_3": 4,
@@ -1236,65 +1567,96 @@ class MetricsHandlers:
             "intensity_7": 8,
             "intensity_9": 10,
         }
+
         if data in intensity_map:
             intensity = intensity_map[data]
             self._update_metric(context, "workout_intensity", intensity)
+            log_metrics_action(
+                update.effective_user.id,
+                "save_metric",
+                {"metric": "workout_intensity", "value": intensity}
+            )
+
             if self._is_edit_mode(context):
                 return await self._show_edit_menu(update, context)
             return await self._show_confirm(update, context)
+
         return STATE_WORKOUT_INTENSITY
 
     # ================================================================
     # ПОДТВЕРЖДЕНИЕ И СОХРАНЕНИЕ
     # ================================================================
 
-    async def _show_confirm(self, update, context) -> int:
+    async def _show_confirm(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Показывает экран подтверждения."""
         query = update.callback_query
         if query:
             await query.answer()
+
         metrics = self._get_today_metrics(context)
         text = (
             "📊 <b>Твои метрики за сегодня</b>\n\n"
             f"{format_metrics_summary(metrics)}\n\n"
             "Всё верно?"
         )
+
         if query:
             await self._safe_edit_message(query, text, get_confirm_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_confirm_keyboard(), parse_mode="HTML")
         return STATE_CONFIRM
 
-    async def _show_edit_menu(self, update, context) -> int:
+    async def _show_edit_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Показывает меню для редактирования метрик."""
         query = update.callback_query
         if query:
             await query.answer()
+
         metrics = self._get_today_metrics(context)
         text = (
             "✏️ <b>Редактирование метрик</b>\n\n"
             f"{format_metrics_summary(metrics)}\n\n"
             "Что хочешь изменить?"
         )
+
         if query:
             await self._safe_edit_message(query, text, get_edit_keyboard())
         else:
             await update.message.reply_text(text, reply_markup=get_edit_keyboard(), parse_mode="HTML")
         return STATE_EDIT_MENU
 
-    async def confirm_and_save(self, update, context) -> int:
+    async def confirm_and_save(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Сохраняет метрики в БД и завершает."""
         query = update.callback_query
+
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
         metrics = self._get_today_metrics(context)
+
+        # Подсчёт заполненных метрик
         filled_metrics = [k for k, v in metrics.items() if v is not None]
         metrics_count = len(filled_metrics)
 
         try:
             today = date.today()
+            # Пробуем использовать save_metrics (оптимальный путь)
             try:
                 await self.metrics_repo.save_metrics(user_id, today, metrics)
                 await query.answer("✅ Метрики сохранены!")
                 logger.info(f"Metrics saved for user {user_id}")
+                log_metrics_action(
+                    user_id,
+                    "save_all_metrics",
+                    {"count": metrics_count, "metrics": filled_metrics}
+                )
             except AttributeError:
+                # Fallback: если save_metrics не существует, сохраняем по одной
                 logger.warning("save_metrics not found, using fallback save_metric")
                 metric_mapping = {
                     "sleep_hours": ("sleep", "hours"),
@@ -1314,48 +1676,84 @@ class MetricsHandlers:
                         mapping = metric_mapping.get(key)
                         if mapping:
                             mt, st = mapping
-                            await self.metrics_repo.save_metric(user_id, mt, value, st, today.isoformat())
+                            await self.metrics_repo.save_metric(
+                                user_id, mt, value, st, today.isoformat()
+                            )
                 await query.answer("✅ Метрики сохранены!")
+                log_metrics_action(
+                    user_id,
+                    "save_all_metrics_fallback",
+                    {"count": metrics_count, "metrics": filled_metrics}
+                )
         except Exception as e:
             logger.error(f"Failed to save metrics: {e}", exc_info=True)
-            await query.answer("⚠️ Ошибка при сохранении. Попробуйте позже.", show_alert=True)
+            log_metrics_action(
+                user_id,
+                "save_all_metrics_error",
+                {"error": str(e)},
+                status="error"
+            )
+            await query.answer(
+                "⚠️ Ошибка при сохранении метрик. Попробуйте позже.",
+                show_alert=True
+            )
             if self._is_edit_mode(context):
                 return await self._show_edit_menu(update, context)
             return await self._back_to_diary(update, context)
 
         self._clear_metrics(context)
+
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
+
         return ConversationHandler.END
 
     # ================================================================
     # ОТМЕНА И ВОЗВРАТ
     # ================================================================
 
-    async def cancel(self, update, context) -> int:
+    async def cancel(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Отмена и возврат в дневник."""
         user_id = None
         try:
             user_id = await self.user_repo.get_user_id(update.effective_user.id)
         except Exception:
             pass
+
         query = update.callback_query
         if query:
             await query.answer()
+
         self._clear_metrics(context)
+
+        if user_id:
+            log_metrics_action(user_id, "cancel_metrics")
+
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
         return ConversationHandler.END
 
-    async def _back_to_diary(self, update, context) -> int:
+    async def _back_to_diary(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        """Возврат в дневник без сохранения."""
         user_id = None
         try:
             user_id = await self.user_repo.get_user_id(update.effective_user.id)
         except Exception:
             pass
+
         query = update.callback_query
         if query:
             await query.answer()
+
         self._clear_metrics(context)
+
+        if user_id:
+            log_metrics_action(user_id, "back_to_diary")
+
         from handlers.start.handlers import show_diary
         await show_diary(update, context)
         return ConversationHandler.END
@@ -1368,6 +1766,7 @@ class MetricsHandlers:
 def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
     """Создаёт ConversationHandler для сбора метрик и аналитики."""
     h = MetricsHandlers(db)
+
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(h.show_metrics_menu, pattern=r"^metrics_show$"),
@@ -1412,6 +1811,7 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                     pattern=r"^(analytics_|metrics_back_to_menu|back_to_analytics)"
                 ),
             ],
+            # ИСПРАВЛЕНО: pattern без $ для кнопок sleep_6, sleep_7, etc.
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern=r"^sleep"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
@@ -1452,12 +1852,14 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
                 CallbackQueryHandler(h.back_to_main_menu, pattern=r"^back_to_main$"),
             ],
+            # ИСПРАВЛЕНО: pattern без $ для кнопок steps_2000, etc.
             STATE_STEPS: [
                 CallbackQueryHandler(h.process_steps, pattern=r"^steps"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
                 CallbackQueryHandler(h.back_to_main_menu, pattern=r"^back_to_main$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_steps),
             ],
+            # ИСПРАВЛЕНО: pattern без $ для кнопок feet_1, etc.
             STATE_HOURS_ON_FEET: [
                 CallbackQueryHandler(h.process_hours_on_feet, pattern=r"^feet"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
@@ -1469,6 +1871,7 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
                 CallbackQueryHandler(h.back_to_main_menu, pattern=r"^back_to_main$"),
             ],
+            # ИСПРАВЛЕНО: добавлен MessageHandler + back_to_workout_type
             STATE_WORKOUT_DURATION: [
                 CallbackQueryHandler(
                     h.process_workout_duration,
@@ -1483,6 +1886,7 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=r"^back_to_edit$"),
                 CallbackQueryHandler(h.back_to_main_menu, pattern=r"^back_to_main$"),
             ],
+            # ИСПРАВЛЕНО: добавлена явная обработка metrics_cancel
             STATE_CONFIRM: [
                 CallbackQueryHandler(h.confirm_and_save, pattern=r"^metrics_confirm_all$"),
                 CallbackQueryHandler(h._show_edit_menu, pattern=r"^metrics_edit$"),
