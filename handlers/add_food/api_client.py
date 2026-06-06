@@ -1,3 +1,4 @@
+# api_client.py
 import asyncio
 import httpx
 import logging
@@ -11,6 +12,10 @@ logger = logging.getLogger(__name__)
 class OpenFoodFactsClient:
     """
     Клиент для работы с Open Food Facts API.
+    
+    Приоритет поиска:
+    1. Российские товары на русском языке
+    2. Глобальная база (если в России не найдено)
     
     Реальность 2026 года:
     - Search-a-licious (SAL) — единственный стабильный полнотекстовый поиск
@@ -53,7 +58,10 @@ class OpenFoodFactsClient:
     ) -> List[Dict[str, Any]]:
         """
         Полнотекстовый поиск через Search-a-licious (SAL).
-        Единственный надёжный источник в 2026 году.
+        
+        Приоритет:
+        1. Российские товары на русском
+        2. Глобальная база (если в России не найдено)
         """
         cache_key = f"{query}:{page}:{page_size}"
 
@@ -63,12 +71,24 @@ class OpenFoodFactsClient:
 
         try:
             await self._rate_limit()
-            products = await self._search_sal(query, page, page_size)
+            
+            # ЭТАП 1: Ищем только в России
+            products = await self._search_sal_russia(query, page, page_size)
             if products:
-                logger.info(f"SAL found {len(products)} products for '{query}'")
+                logger.info(f"🇷🇺 Found {len(products)} Russian products for '{query}'")
                 self._add_to_cache(cache_key, products)
                 return products
-            logger.warning(f"SAL returned 0 products for '{query}'")
+            
+            # ЭТАП 2: Если в России ничего нет — ищем глобально
+            logger.info(f"🇷🇺 No Russian products for '{query}', searching globally...")
+            await self._rate_limit()
+            products = await self._search_sal_global(query, page, page_size)
+            if products:
+                logger.info(f"🌍 Found {len(products)} global products for '{query}'")
+                self._add_to_cache(cache_key, products)
+                return products
+            
+            logger.warning(f"❌ No products found for '{query}'")
         except httpx.HTTPStatusError as e:
             logger.error(f"SAL HTTP error: {e.response.status_code}")
         except Exception as e:
@@ -76,24 +96,30 @@ class OpenFoodFactsClient:
 
         return []
 
-    async def _search_sal(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
+    async def _search_sal_russia(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
         """
-        Поиск через Search-a-licious.
-        
-        РЕАЛЬНЫЙ формат ответа (проверено тестами):
-        {
-            "hits": [ {...product1}, {...product2} ],  ← массив ПРЯМЫХ продуктов
-            "count": 17,
-            "page": 1,
-            "page_size": 5,
-            "page_count": 4,
-            ...
+        Поиск ТОЛЬКО по российским товарам.
+        Использует фильтры SAL:
+        - countries_tags_contains=russia (товары из России)
+        - langs_contains=russian (с русскими названиями)
+        """
+        params = {
+            "q": query,
+            "page": page,
+            "page_size": page_size,
+            "countries_tags_contains": "russia",  # Только Россия
+            "langs_contains": "russian",  # Только русский язык
         }
-        
-        Каждый продукт в hits имеет поля:
-        - code, product_name, product_name_ru, brands (list), quantity
-        - nutriments: {energy-kcal_100g, proteins_100g, fat_100g, carbohydrates_100g}
-        - image_url
+
+        response = await self.client.get(self.SEARCH_URL_SAL, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        return self._parse_sal_response(data, page_size)
+
+    async def _search_sal_global(self, query: str, page: int, page_size: int) -> List[Dict[str, Any]]:
+        """
+        Глобальный поиск (fallback, если в России ничего не найдено).
         """
         params = {
             "q": query,
@@ -105,6 +131,10 @@ class OpenFoodFactsClient:
         response.raise_for_status()
         data = response.json()
 
+        return self._parse_sal_response(data, page_size)
+
+    def _parse_sal_response(self, data: Dict[str, Any], page_size: int) -> List[Dict[str, Any]]:
+        """Парсит ответ от SAL (общий метод для России и глобального поиска)."""
         products = []
         
         # SAL всегда возвращает dict с ключом 'hits' (массив прямых продуктов)
@@ -144,9 +174,10 @@ class OpenFoodFactsClient:
         fat_100g = nutriments.get("fat_100g", 0) or 0
         carbs_100g = nutriments.get("carbohydrates_100g", 0) or 0
 
-        # В SAL есть product_name_ru для русских продуктов
+        # Приоритет: русское название → основное → английское
         name = (product.get("product_name_ru") or 
                 product.get("product_name") or 
+                product.get("product_name_en") or
                 "Неизвестный продукт")
 
         # brands в SAL может быть списком или строкой
@@ -170,6 +201,7 @@ class OpenFoodFactsClient:
             "fat_100g": float(fat_100g) if fat_100g else 0.0,
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
+            "is_russian": True,  # Помечаем как российский товар
         }
 
     async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
@@ -221,13 +253,31 @@ class OpenFoodFactsClient:
         fat_100g = nutriments.get("fat_100g", 0) or 0
         carbs_100g = nutriments.get("carbohydrates_100g", 0) or 0
 
-        name = product.get("product_name") or "Неизвестный продукт"
+        # 🎯 ИСПРАВЛЕН БАГ: берём русское название с приоритетом
+        name = (product.get("product_name_ru") or 
+                product.get("product_name") or 
+                product.get("product_name_en") or
+                "Неизвестный продукт")
+
+        # 🎯 ИСПРАВЛЕН БАГ: правильная обработка brands (может быть строка с запятыми без пробелов)
         brands = product.get("brands", "")
-        if not isinstance(brands, str):
+        if isinstance(brands, list):
+            brands = ", ".join(brands)
+        elif isinstance(brands, str):
+            # Заменяем "Щедрый Год,Чижик" на "Щедрый Год, Чижик"
+            brands = brands.replace(",", ", ")
+        else:
             brands = ""
 
         quantity = product.get("quantity")
         default_weight = self._parse_default_weight(quantity)
+
+        # Проверяем, из России ли товар
+        countries_tags = product.get("countries_tags", [])
+        is_russian = "russia" in countries_tags or "ru" in countries_tags
+        
+        if not is_russian:
+            logger.warning(f"⚠️ Product {name} is NOT from Russia (countries: {countries_tags})")
 
         return {
             "code": product.get("code", ""),
@@ -240,6 +290,7 @@ class OpenFoodFactsClient:
             "fat_100g": float(fat_100g) if fat_100g else 0.0,
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
+            "is_russian": is_russian,
         }
 
     def _parse_default_weight(self, quantity: Optional[Any]) -> float:
