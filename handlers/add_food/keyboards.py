@@ -1,63 +1,48 @@
 """
-Клавиатуры для добавления еды с пагинацией и умной навигацией.
+Клавиатуры для добавления еды.
+Обновлено для Универсального ввода (Apple-like UX).
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Dict, Any
 from .constants import (
     MEAL_TYPES, PAGE_SIZE,
-    CALLBACK_METHOD_TEXT, CALLBACK_METHOD_BARCODE, CALLBACK_METHOD_FAVORITES,
-    CALLBACK_METHOD_POPULAR, CALLBACK_METHOD_VOICE, CALLBACK_METHOD_MANUAL,
-    CALLBACK_BACK_TO_DIARY, CALLBACK_BACK_TO_METHOD, CALLBACK_BACK_TO_TEXT,
-    CALLBACK_BACK_TO_RESULTS, CALLBACK_BACK_TO_WEIGHT,
-    CALLBACK_SEARCH_AGAIN, CALLBACK_SELECT_PRODUCT,
-    CALLBACK_PAGE_PREV, CALLBACK_PAGE_NEXT,
-    CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
+    CALLBACK_METHOD_UNIVERSAL, CALLBACK_METHOD_FAVORITES, CALLBACK_METHOD_POPULAR,
+    CALLBACK_BACK_TO_DIARY, CALLBACK_BACK_TO_RESULTS, CALLBACK_BACK_TO_WEIGHT,
+    CALLBACK_SEARCH_AGAIN, CALLBACK_SELECT_PRODUCT, CALLBACK_PAGE_PREV,
+    CALLBACK_PAGE_NEXT, CALLBACK_WEIGHT_PREFIX, CALLBACK_WEIGHT_CUSTOM,
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
     CALLBACK_NOOP, CALLBACK_MANUAL_SKIP, CALLBACK_MANUAL_CONFIRM, CALLBACK_MANUAL_EDIT,
 )
 
-
 def get_select_method_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню выбора способа добавления еды."""
+    """🎯 Главное меню: всего 3 кнопки действий + выход."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎤 Голосом (просто скажи)", callback_data=CALLBACK_METHOD_VOICE)],
-        [InlineKeyboardButton("✍️ Написать текстом", callback_data=CALLBACK_METHOD_TEXT)],
-        [InlineKeyboardButton("📷 Сканировать штрихкод", callback_data=CALLBACK_METHOD_BARCODE)],
-        [InlineKeyboardButton("⭐️ Избранное", callback_data=CALLBACK_METHOD_FAVORITES)],
+        [InlineKeyboardButton("➕ Добавить еду", callback_data=CALLBACK_METHOD_UNIVERSAL)],
         [InlineKeyboardButton("🔥 Популярные блюда", callback_data=CALLBACK_METHOD_POPULAR)],
-        [InlineKeyboardButton("➕ Ввести вручную", callback_data=CALLBACK_METHOD_MANUAL)],
+        [InlineKeyboardButton("⭐️ Избранное", callback_data=CALLBACK_METHOD_FAVORITES)],
         [InlineKeyboardButton("📔 ← В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
-
-def get_text_input_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для экрана текстового ввода."""
+def get_universal_input_keyboard() -> InlineKeyboardMarkup:
+    """Минималистичная клавиатура во время ожидания ввода."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
-        [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
+        [InlineKeyboardButton("❌ Отменить", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
-
 
 def get_product_selection_keyboard(
     products: List[Dict[str, Any]],
     page: int = 0,
     query: str = "",
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура выбора продукта с пагинацией.
-    Показывает PAGE_SIZE продуктов на странице с навигацией ◀️ 1/N ▶️
-    """
+    """Клавиатура выбора продукта с пагинацией."""
     total_pages = max(1, (len(products) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
-
     start_idx = page * PAGE_SIZE
     end_idx = start_idx + PAGE_SIZE
     page_products = products[start_idx:end_idx]
 
     buttons = []
-
-    # Список продуктов
     for i, product in enumerate(page_products):
         real_index = start_idx + i
         name = product.get("name", "Без названия")[:32]
@@ -70,44 +55,20 @@ def get_product_selection_keyboard(
             button_text = f"{i + 1}. {name} · {kcal:.0f}ккал/100г"
 
         buttons.append([
-            InlineKeyboardButton(
-                button_text,
-                callback_data=f"{CALLBACK_SELECT_PRODUCT}{real_index}"
-            )
+            InlineKeyboardButton(button_text, callback_data=f"{CALLBACK_SELECT_PRODUCT}{real_index}")
         ])
 
-    # Пагинация (только если больше одной страницы)
     if total_pages > 1:
         nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("◀️", callback_data=CALLBACK_PAGE_PREV))
-        else:
-            nav_row.append(InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
-
-        nav_row.append(
-            InlineKeyboardButton(
-                f"· {page + 1} / {total_pages} ·",
-                callback_data=CALLBACK_NOOP
-            )
-        )
-
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("▶️", callback_data=CALLBACK_PAGE_NEXT))
-        else:
-            nav_row.append(InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
-
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=CALLBACK_PAGE_PREV) if page > 0 else InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
+        nav_row.append(InlineKeyboardButton(f"· {page + 1} / {total_pages} ·", callback_data=CALLBACK_NOOP))
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=CALLBACK_PAGE_NEXT) if page < total_pages - 1 else InlineKeyboardButton("·", callback_data=CALLBACK_NOOP))
         buttons.append(nav_row)
 
-    # Действия
-    buttons.append([
-        InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN)
-    ])
-    buttons.append([
-        InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)
-    ])
+    buttons.append([InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN)])
+    buttons.append([InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)])
 
     return InlineKeyboardMarkup(buttons)
-
 
 def get_weight_input_keyboard(product_name: str = "") -> InlineKeyboardMarkup:
     """Клавиатура выбора веса."""
@@ -129,33 +90,21 @@ def get_weight_input_keyboard(product_name: str = "") -> InlineKeyboardMarkup:
         ],
     ])
 
-
 def get_custom_weight_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для ручного ввода веса."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("← К вариантам веса", callback_data=CALLBACK_BACK_TO_WEIGHT)],
         [InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN)],
     ])
 
-
 def get_meal_type_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора типа приёма пищи."""
-    buttons = []
-    for meal_type, label in MEAL_TYPES.items():
-        buttons.append([
-            InlineKeyboardButton(label, callback_data=f"{CALLBACK_MEAL_PREFIX}{meal_type}")
-        ])
-
+    buttons = [[InlineKeyboardButton(label, callback_data=f"{CALLBACK_MEAL_PREFIX}{meal_type}")] for meal_type, label in MEAL_TYPES.items()]
     buttons.append([
         InlineKeyboardButton("✏️ ← Изменить вес", callback_data=CALLBACK_BACK_TO_WEIGHT),
         InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN),
     ])
-
     return InlineKeyboardMarkup(buttons)
 
-
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения добавления."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Подтвердить", callback_data=CALLBACK_CONFIRM_ADD)],
         [
@@ -165,9 +114,7 @@ def get_confirm_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📔 Отмена (в дневник)", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
-
 def get_save_favorite_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура предложения сохранить в избранное."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("⭐ Да, сохранить", callback_data=CALLBACK_SAVE_FAVORITE_YES),
@@ -175,60 +122,22 @@ def get_save_favorite_keyboard() -> InlineKeyboardMarkup:
         ],
     ])
 
-
 def get_after_add_keyboard() -> InlineKeyboardMarkup:
-    """Экран после успешного добавления."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🍽️ Добавить ещё одно блюдо", callback_data=CALLBACK_ADD_ANOTHER)],
-        [InlineKeyboardButton("🔍 Поискать что-то другое", callback_data=CALLBACK_SEARCH_AGAIN)],
+        [InlineKeyboardButton("🍽️ Добавить ещё", callback_data=CALLBACK_ADD_ANOTHER)],
+        [InlineKeyboardButton("🔍 Поискать другое", callback_data=CALLBACK_SEARCH_AGAIN)],
         [InlineKeyboardButton("📔 Вернуться в дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
-
-def get_barcode_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для режима сканирования штрихкода."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✍️ Ввести цифры вручную", callback_data=CALLBACK_BACK_TO_TEXT)],
-        [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
-        [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
-    ])
-
-
-def get_voice_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для режима голосового ввода."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
-        [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
-    ])
-
-
-def get_manual_input_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для ручного ввода (шаблон)."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 ← К выбору способа", callback_data=CALLBACK_BACK_TO_METHOD)],
-        [InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
-    ])
-
-
 def get_manual_skip_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой 'Пропустить' для поэтапного ввода."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⏭ Пропустить", callback_data=CALLBACK_MANUAL_SKIP)],
-        [InlineKeyboardButton("🔙 ← Назад", callback_data=CALLBACK_BACK_TO_METHOD)],
+        [InlineKeyboardButton("🔙 ← Назад", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
-
 def get_manual_confirm_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения ручного ввода."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Всё верно", callback_data=CALLBACK_MANUAL_CONFIRM)],
         [InlineKeyboardButton("✏️ Изменить", callback_data=CALLBACK_MANUAL_EDIT)],
         [InlineKeyboardButton("📔 Отмена", callback_data=CALLBACK_BACK_TO_DIARY)],
-    ])
-
-
-def get_back_keyboard(callback_data: str = CALLBACK_BACK_TO_DIARY) -> InlineKeyboardMarkup:
-    """Универсальная кнопка Назад."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 ← Назад", callback_data=callback_data)]
     ])
