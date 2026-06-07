@@ -3,7 +3,7 @@
 """
 import logging
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 
@@ -63,6 +63,7 @@ class SleepData:
 class EnergyData:
     morning: Optional[int] = None
     evening: Optional[int] = None
+
     @property
     def avg(self) -> Optional[float]:
         if self.morning is not None and self.evening is not None:
@@ -250,7 +251,8 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
         awakenings_text = {0: "нет", 1: "1 раз", 2: "2 раза", 3: "3+ раз"}.get(sleep_awakenings, "")
         lines.append(f"😴 Сон: {sleep_hours}ч {quality_stars} {awakenings_text}")
     else:
-        lines.append("😴 Сон:  не заполнено")
+        lines.append("😴 Сон: не заполнено")
+
     energy_morning = metrics.get("energy_morning")
     energy_evening = metrics.get("energy_evening")
     if energy_morning is not None:
@@ -261,11 +263,13 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
         lines.append(f"⚡ Энергия вечером: {energy_evening}/10")
     else:
         lines.append("⚡ Энергия вечером: ❌ не заполнено")
+
     stress = metrics.get("stress_level")
     if stress is not None:
         lines.append(f"😰 Стресс: {stress}/10")
     else:
         lines.append("😰 Стресс: ❌ не заполнено")
+
     steps = metrics.get("steps")
     hours_on_feet = metrics.get("hours_on_feet")
     if steps is not None:
@@ -274,6 +278,7 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
         lines.append(f"👣 Часы на ногах: {hours_on_feet}ч")
     if steps is None and hours_on_feet is None:
         lines.append("👣 Активность: ❌ не заполнено")
+
     workout_type = metrics.get("workout_type")
     workout_duration = metrics.get("workout_duration")
     workout_intensity = metrics.get("workout_intensity")
@@ -285,6 +290,7 @@ def format_metrics_summary(metrics: Dict[str, Any]) -> str:
         lines.append(f"💪 Тренировка: {type_text}{duration_text}{intensity_text}")
     else:
         lines.append("💪 Тренировка: ❌ не было или не заполнено")
+
     return "\n".join(lines)
 
 def format_insights(insights: List[Any], max_count: int = 5) -> str:
@@ -339,7 +345,7 @@ def format_states(states: List[Any]) -> str:
         severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢", "positive": "✨"}.get(state.severity, "⚪")
         lines.append(f"{state.emoji} <b>{state_name_ru(state.state_type)}</b> {severity_emoji}")
         if state.indicators:
-            lines.append("    <i>Признаки:</i>")
+            lines.append("     <i>Признаки:</i>")
             for indicator in state.indicators[:3]:
                 lines.append(f"   • {indicator}")
         lines.append(f"\n   💡 {state.recommendation}")
@@ -360,10 +366,15 @@ def format_macro_balance(agg: Any) -> str:
     protein_pct = (protein_kcal / total_kcal) * 100
     fat_pct = (fat_kcal / total_kcal) * 100
     carbs_pct = (carbs_kcal / total_kcal) * 100
+
     def bar(pct: float, length: int = 10) -> str:
         filled = int(pct / 100 * length)
         return "▰" * filled + "▱" * (length - filled)
-    lines = ["<b>⚖️ Баланс БЖУ:</b>", f"🍗 Белки: {bar(protein_pct)} {protein_pct:.0f}% ({agg.nutrition.total_protein_g:.0f}г)", f"🥑 Жиры: {bar(fat_pct)} {fat_pct:.0f}% ({agg.nutrition.total_fat_g:.0f}г)", f"🍚 Углеводы: {bar(carbs_pct)} {carbs_pct:.0f}% ({agg.nutrition.total_carbs_g:.0f}г)"]
+
+    lines = ["<b>⚖️ Баланс БЖУ:</b>",
+             f"🍗 Белки: {bar(protein_pct)} {protein_pct:.0f}% ({agg.nutrition.total_protein_g:.0f}г)",
+             f"🥑 Жиры: {bar(fat_pct)} {fat_pct:.0f}% ({agg.nutrition.total_fat_g:.0f}г)",
+             f"🍚 Углеводы: {bar(carbs_pct)} {carbs_pct:.0f}% ({agg.nutrition.total_carbs_g:.0f}г)"]
     return "\n".join(lines)
 
 def format_forecast(aggregates: List[Any], profile: Dict[str, Any]) -> str:
@@ -386,7 +397,7 @@ def format_forecast(aggregates: List[Any], profile: Dict[str, Any]) -> str:
             weeks_to_goal = remaining / weekly_rate
             days_to_goal = int(weeks_to_goal * 7)
             if days_to_goal > 0:
-                target_date = date.today() + __import__('datetime').timedelta(days=days_to_goal)
+                target_date = date.today() + timedelta(days=days_to_goal)
                 lines.append(f"\n📅 При текущем темпе ({weekly_rate:+.2f} кг/нед):")
                 lines.append(f"   Цель будет достигнута через <b>{days_to_goal} дней</b>")
                 lines.append(f"   Примерная дата: <b>{target_date.strftime('%d.%m.%Y')}</b>")
@@ -396,6 +407,7 @@ def format_forecast(aggregates: List[Any], profile: Dict[str, Any]) -> str:
             lines.append("\n⏸️ <i>Темп изменений слишком мал для прогноза</i>")
     else:
         lines.append("\n⚙️ <i>Целевой вес не установлен в профиле</i>")
+
     if weekly_rate < -1:
         lines.append("\n⚠️ <b>Внимание:</b> слишком быстрая потеря веса!")
         lines.append("Рекомендуется темп 0.5-1 кг/нед для сохранения мышц.")
@@ -405,6 +417,7 @@ def format_forecast(aggregates: List[Any], profile: Dict[str, Any]) -> str:
         lines.append("\n⏸️ Вес стабилен (плато)")
     elif weekly_rate >= 0.3:
         lines.append("\n📈 Набор веса")
+
     return "\n".join(lines)
 
 def format_best_day(aggregates: List[Any]) -> str:
@@ -434,9 +447,11 @@ def format_best_day(aggregates: List[Any]) -> str:
             score += 3
             details.append(f"🍗 Белок: {agg.derived.protein_per_kg:.1f}г/кг")
         scored_days.append((score, agg, details))
+
     scored_days.sort(key=lambda x: x[0], reverse=True)
     best_score, best_agg, best_details = scored_days[0]
     avg_score = sum(s[0] for s in scored_days) / len(scored_days)
+
     lines = ["🏆 <b>Твой лучший день</b>\n"]
     lines.append(f"📅 <b>{best_agg.date.strftime('%d.%m.%Y')}</b>")
     lines.append(f"⭐ Скор: <b>{best_score:.1f}</b> (среднее: {avg_score:.1f})\n")

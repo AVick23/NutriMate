@@ -1,6 +1,7 @@
 """
 Состояния FSM и callback-данные для модуля сбора метрик.
 """
+
 # Состояния ConversationHandler
 (
     STATE_MAIN_MENU,           # 0
@@ -22,7 +23,7 @@
     STATE_FORECAST,            # 16
     STATE_BEST_DAY,            # 17
     STATE_STATES,              # 18
-    STATE_TRENDS,              # 19 (добавлено для полноты)
+    STATE_TRENDS,              # 19
 ) = range(20)
 
 # Типы сессий
@@ -71,6 +72,7 @@ CALLBACK_CANCEL = "metrics_cancel"
 SLEEP_HOURS_QUICK = [6, 6.5, 7, 7.5, 8, 8.5, 9]
 ENERGY_STRESS_QUICK = list(range(1, 11))
 STEPS_QUICK = [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12000, 15000]
+
 WORKOUT_TYPES = [
     ("strength", "🏋️ Силовая"),
     ("cardio", "🏃 Кардио"),

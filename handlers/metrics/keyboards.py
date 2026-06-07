@@ -96,8 +96,8 @@ def get_steps_keyboard() -> InlineKeyboardMarkup:
 
 def get_hours_on_feet_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1-2 часа", callback_data="feet_1"), InlineKeyboardButton("3-4 часа", callback_data="feet_3")],
-        [InlineKeyboardButton("5-6 часов", callback_data="feet_5"), InlineKeyboardButton("7-8 часов", callback_data="feet_7")],
+        [InlineKeyboardButton("1-2 часа", callback_data="feet_1.5"), InlineKeyboardButton("3-4 часа", callback_data="feet_3.5")],
+        [InlineKeyboardButton("5-6 часов", callback_data="feet_5.5"), InlineKeyboardButton("7-8 часов", callback_data="feet_7.5")],
         [InlineKeyboardButton("9+ часов", callback_data="feet_9"), InlineKeyboardButton("✏️ Свой", callback_data="feet_custom")],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_BACK_TO_EDIT)],
     ])

@@ -4,6 +4,7 @@
 import logging
 from datetime import date, timedelta
 from typing import List, Optional, Dict, Any
+
 from db import Database
 from .core import DailyAggregate, Pattern, Insight, StateDetection, MIN_CORRELATION, MIN_SAMPLE_SIZE, P_VALUE_THRESHOLD, LAGS, STATE_NAMES, METRIC_NAMES, pearson_correlation, get_lagged_pairs, aggregates_to_dict, generate_effect_text, safe_average, format_metrics_summary, format_insights, format_insights_compact, format_patterns, format_states, format_macro_balance, format_forecast, format_best_day, format_tdee_modifiers, state_name_ru, split_long_message
 from .engine import DailyAggregator, ChartGenerator
