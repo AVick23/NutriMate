@@ -19,12 +19,8 @@
     STATE_WORKOUT_INTENSITY,   # 12
     STATE_CONFIRM,             # 13
     STATE_ANALYTICS,           # 14
-    STATE_PATTERNS,            # 15
-    STATE_FORECAST,            # 16
-    STATE_BEST_DAY,            # 17
-    STATE_STATES,              # 18
-    STATE_TRENDS,              # 19
-) = range(20)
+    STATE_HISTORY,             # 15
+) = range(16)
 
 # Типы сессий
 SESSION_MORNING = "morning"
@@ -73,6 +69,7 @@ SLEEP_HOURS_QUICK = [6, 6.5, 7, 7.5, 8, 8.5, 9]
 ENERGY_STRESS_QUICK = list(range(1, 11))
 STEPS_QUICK = [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12000, 15000]
 
+# ИСПРАВЛЕНО: Убран пробел в WORKOUT_TYPES
 WORKOUT_TYPES = [
     ("strength", "🏋️ Силовая"),
     ("cardio", "🏃 Кардио"),

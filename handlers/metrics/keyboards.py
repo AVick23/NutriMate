@@ -1,6 +1,7 @@
 """
 Клавиатуры для модуля сбора метрик.
 """
+from datetime import date
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .constants import (
     CALLBACK_METRICS_TODAY, CALLBACK_METRICS_EDIT, CALLBACK_METRICS_HISTORY,
@@ -36,6 +37,16 @@ def get_analytics_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧬 Состояния", callback_data=CALLBACK_ANALYTICS_STATES)],
         [InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)],
     ])
+
+def get_history_keyboard(dates: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for d in dates[:15]:  # Показываем максимум 15 последних дней
+        buttons.append([InlineKeyboardButton(
+            f"📅 {d.strftime('%d.%m.%Y')}", 
+            callback_data=f"history_date_{d.isoformat()}"
+        )])
+    buttons.append([InlineKeyboardButton("← Назад", callback_data=CALLBACK_METRICS_BACK_TO_MENU)])
+    return InlineKeyboardMarkup(buttons)
 
 def get_sleep_keyboard() -> InlineKeyboardMarkup:
     buttons = []

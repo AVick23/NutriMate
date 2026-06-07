@@ -9,7 +9,11 @@ from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.error import BadRequest
 
 from db import Database, UserRepository
-from analytics import DailyAggregator, WeeklyReportGenerator, StateDetector, PatternDetector, DailyMetricsRepository
+from analytics import (
+    DailyAggregator, WeeklyReportGenerator, StateDetector, PatternDetector, 
+    DailyMetricsRepository, ChartGenerator,
+    format_patterns, format_forecast, format_best_day, format_states
+)
 from .constants import *
 from .keyboards import *
 from .utils import get_default_metrics, format_metrics_summary, split_long_message
@@ -66,6 +70,22 @@ class MetricsHandlers:
                 await update.message.reply_text(text, parse_mode="HTML")
         except Exception:
             pass
+
+    async def _send_photo_with_back_button(self, query, photo_bytes: bytes, caption: str):
+        """Отправляет график и кнопку 'Назад'."""
+        if photo_bytes:
+            try:
+                await query.edit_message_text("📊 График отправлен ниже 👇", reply_markup=get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+            except Exception:
+                pass
+            await query.message.reply_photo(
+                photo=photo_bytes,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
+            )
+        else:
+            await self._safe_edit_message(query, caption + "\n\n<i>Недостаточно данных для построения графика.</i>", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
 
     # ============================================================
     # ВХОДНАЯ ТОЧКА И МЕНЮ
@@ -128,13 +148,58 @@ class MetricsHandlers:
             return await self._show_analytics_menu(update, context)
 
         if data == CALLBACK_METRICS_HISTORY:
-            await query.answer("🚧 История метрик в разработке", show_alert=True)
-            return STATE_MAIN_MENU
+            return await self._show_history(update, context, user_id)
 
         return STATE_MAIN_MENU
 
     # ============================================================
-    # АНАЛИТИКА (Интеграция с analytics)
+    # ИСТОРИЯ МЕТРИК
+    # ============================================================
+    async def _show_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+        query = update.callback_query
+        start_date = date.today() - timedelta(days=30)
+        end_date = date.today()
+        
+        try:
+            all_metrics = await self.metrics_repo.get_metrics_range(user_id, start_date, end_date)
+        except Exception:
+            all_metrics = []
+            
+        valid_dates = []
+        for m in all_metrics:
+            # Исключаем служебные поля БД
+            data_fields = {k: v for k, v in m.items() if k not in ('metric_date', 'id', 'user_id', 'created_at', 'updated_at')}
+            if any(v is not None for v in data_fields.values()):
+                try:
+                    valid_dates.append(date.fromisoformat(m['metric_date']))
+                except ValueError:
+                    pass
+                    
+        valid_dates.sort(reverse=True) # От новых к старым
+        
+        if not valid_dates:
+            text = "📜 <b>История метрик</b>\n\n<i>За последние 30 дней нет сохраненных данных.</i>"
+            await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+            return STATE_ANALYTICS
+            
+        text = "📜 <b>История метрик</b>\n\nВыбери дату для просмотра деталей и графиков:"
+        await self._safe_edit_message(query, text, get_history_keyboard(valid_dates))
+        return STATE_HISTORY
+
+    async def process_history_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        date_str = query.data.replace("history_date_", "")
+        try:
+            target_date = date.fromisoformat(date_str)
+        except ValueError:
+            return STATE_HISTORY
+            
+        user_id = await self.user_repo.get_user_id(update.effective_user.id)
+        return await self._show_daily_analytics(update, context, user_id, target_date)
+
+    # ============================================================
+    # АНАЛИТИКА (С ГРАФИКАМИ)
     # ============================================================
     async def _show_analytics_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
@@ -155,16 +220,13 @@ class MetricsHandlers:
         elif data == CALLBACK_ANALYTICS_WEEKLY:
             return await self._show_weekly_analytics(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_TRENDS:
-            await query.answer("🚧 Тренды в разработке", show_alert=True)
-            return STATE_ANALYTICS
+            return await self._show_trends_analytics(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_PATTERNS:
             return await self._show_patterns(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_FORECAST:
-            await query.answer("🚧 Прогноз в разработке", show_alert=True)
-            return STATE_ANALYTICS
+            return await self._show_forecast(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_BEST_DAY:
-            await query.answer("🚧 Лучший день в разработке", show_alert=True)
-            return STATE_ANALYTICS
+            return await self._show_best_day(update, context, user_id)
         elif data == CALLBACK_ANALYTICS_STATES:
             return await self._show_states(update, context, user_id)
         elif data == CALLBACK_METRICS_BACK_TO_MENU:
@@ -172,21 +234,37 @@ class MetricsHandlers:
 
         return STATE_ANALYTICS
 
-    async def _show_daily_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+    async def _show_daily_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, target_date: Optional[date] = None) -> int:
         query = update.callback_query
-        yesterday = date.today() - timedelta(days=1)
+        if target_date is None:
+            target_date = date.today() - timedelta(days=1)
+            
         try:
             aggregator = DailyAggregator(self.db)
-            aggregated = await aggregator.aggregate(user_id, yesterday)
-            text = f"📅 <b>Аналитика за {yesterday.strftime('%d.%m.%Y')}</b>\n\n"
+            aggregated = await aggregator.aggregate(user_id, target_date)
+            
+            # Собираем данные за 7 дней для графика "Сон vs Энергия"
+            start_date = target_date - timedelta(days=6)
+            aggregates_7d = []
+            for i in range(7):
+                d = start_date + timedelta(days=i)
+                aggregates_7d.append(await aggregator.aggregate(user_id, d))
+                
+            photo = ChartGenerator.generate_sleep_energy_chart(aggregates_7d)
+            
+            text = f"📅 <b>Аналитика за {target_date.strftime('%d.%m.%Y')}</b>\n\n"
             text += f"😴 Сон: {aggregated.sleep.hours or 'N/A'} ч\n"
+            text += f"⭐ Качество: {aggregated.sleep.quality or 'N/A'}/5\n"
             text += f"⚡ Энергия: {aggregated.derived.avg_energy or 'N/A'}/10\n"
             text += f"👣 Шаги: {aggregated.activity.steps or 'N/A'}\n"
             text += f"😰 Стресс: {aggregated.stress or 'N/A'}/10\n"
-            await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+            
+            await self._send_photo_with_back_button(query, photo, text)
+            
         except Exception as e:
             logger.error(f"Daily analytics error: {e}")
             await self._safe_edit_message(query, "⚠️ Ошибка расчёта аналитики.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+            
         return STATE_ANALYTICS
 
     async def _show_weekly_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
@@ -195,17 +273,75 @@ class MetricsHandlers:
             profile = await self.user_repo.get_profile(user_id) or {}
             report_gen = WeeklyReportGenerator(self.db)
             report_text: str = await report_gen.generate_report(user_id, profile)
+            
+            # График тренда веса за 30 дней
+            aggregator = DailyAggregator(self.db)
+            aggregates_30d = []
+            for i in range(30):
+                aggregates_30d.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
+            aggregates_30d.reverse() # Хронология
+            
+            photo = ChartGenerator.generate_weight_trend_chart(aggregates_30d, profile.get('target_weight'))
+            
+            parts = split_long_message(report_text, 1000) # Caption фото ограничен 1024 символами
+            
+            if photo:
+                caption = parts[0] if parts else "📊 Недельный отчет"
+                if len(caption) > 1000: caption = caption[:990] + "..."
+                
+                try:
+                    await query.edit_message_text("📊 Отправляю недельный отчет и график...")
+                except: pass
+                
+                await query.message.reply_photo(
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU)
+                )
+                for part in parts[1:]:
+                    await query.message.reply_text(part, parse_mode="HTML")
+            else:
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        await self._safe_edit_message(query, part, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+                    else:
+                        await query.message.reply_text(part, parse_mode="HTML")
+                        
         except Exception as e:
             logger.error(f"Weekly analytics error: {e}")
             await self._safe_edit_message(query, "⚠️ Ошибка формирования отчёта.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
-            return STATE_ANALYTICS
+            
+        return STATE_ANALYTICS
 
-        parts = split_long_message(report_text, 4000)
-        for i, part in enumerate(parts):
-             if i == 0:
-                await self._safe_edit_message(query, part, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
-             else:
-                await query.message.reply_text(part, parse_mode="HTML")
+    async def _show_trends_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+        query = update.callback_query
+        try:
+            aggregator = DailyAggregator(self.db)
+            aggregates = []
+            for i in range(30):
+                aggregates.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
+            aggregates.reverse()
+            
+            profile = await self.user_repo.get_profile(user_id) or {}
+            
+            photo1 = ChartGenerator.generate_weight_trend_chart(aggregates, profile.get('target_weight'))
+            photo2 = ChartGenerator.generate_sleep_energy_chart(aggregates)
+            
+            try:
+                await query.edit_message_text("📈 Отправляю графики трендов...")
+            except: pass
+            
+            if photo1:
+                await query.message.reply_photo(photo=photo1, caption="📈 <b>Тренд веса</b>", parse_mode="HTML")
+            if photo2:
+                await query.message.reply_photo(photo=photo2, caption="⚡ <b>Сон и Энергия</b>", parse_mode="HTML")
+                
+            await self._safe_edit_message(query, "📈 <b>Тренды</b>\n\nГрафики отправлены выше ☝️", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+        except Exception as e:
+            logger.error(f"Trends error: {e}")
+            await self._safe_edit_message(query, "⚠️ Ошибка.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+            
         return STATE_ANALYTICS
 
     async def _show_patterns(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
@@ -213,24 +349,13 @@ class MetricsHandlers:
         try:
             aggregator = DailyAggregator(self.db)
             pattern_detector = PatternDetector(self.db)
-            end_date = date.today() - timedelta(days=1)
-            
             aggregates = []
             for i in range(30):
-                d = end_date - timedelta(days=i)
-                aggregates.append(await aggregator.aggregate(user_id, d))
-            
-            # ВАЖНО: Переворачиваем список, чтобы он шел от старого к новому (хронология)
+                aggregates.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
             aggregates.reverse()
-            patterns = await pattern_detector.detect_patterns(user_id, aggregates)
             
-            text = "🔍 <b>Твои уникальные паттерны</b>\n\n"
-            if not patterns:
-                text += "Пока недостаточно данных (нужно минимум 14 дней)."
-            else:
-                for p in patterns[:5]:
-                    confidence = int((1 - p.p_value) * 100) if p.p_value else 50
-                    text += f"• {p.effect_text} (уверенность: {confidence}%)\n"
+            patterns = await pattern_detector.detect_patterns(user_id, aggregates)
+            text = format_patterns(patterns)
             
             await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         except Exception as e:
@@ -238,30 +363,52 @@ class MetricsHandlers:
             await self._safe_edit_message(query, "⚠️ Ошибка анализа паттернов.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         return STATE_ANALYTICS
 
+    async def _show_forecast(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+        query = update.callback_query
+        try:
+            aggregator = DailyAggregator(self.db)
+            profile = await self.user_repo.get_profile(user_id) or {}
+            aggregates = []
+            for i in range(30):
+                aggregates.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
+            aggregates.reverse()
+            
+            text = format_forecast(aggregates, profile)
+            await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+        except Exception as e:
+            logger.error(f"Forecast error: {e}")
+            await self._safe_edit_message(query, "⚠️ Ошибка прогноза.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+        return STATE_ANALYTICS
+
+    async def _show_best_day(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+        query = update.callback_query
+        try:
+            aggregator = DailyAggregator(self.db)
+            aggregates = []
+            for i in range(30):
+                aggregates.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
+            aggregates.reverse()
+            
+            text = format_best_day(aggregates)
+            await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+        except Exception as e:
+            logger.error(f"Best day error: {e}")
+            await self._safe_edit_message(query, "⚠️ Ошибка.", get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
+        return STATE_ANALYTICS
+
     async def _show_states(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
         query = update.callback_query
         try:
             aggregator = DailyAggregator(self.db)
             state_detector = StateDetector()
-            end_date = date.today() - timedelta(days=1)
-            
+            profile = await self.user_repo.get_profile(user_id) or {}
             aggregates = []
             for i in range(14):
-                d = end_date - timedelta(days=i)
-                aggregates.append(await aggregator.aggregate(user_id, d))
-            
-            # Переворачиваем для хронологического порядка
+                aggregates.append(await aggregator.aggregate(user_id, date.today() - timedelta(days=i)))
             aggregates.reverse()
-            profile = await self.user_repo.get_profile(user_id) or {}
-            states = state_detector.detect_states(aggregates, profile)
             
-            text = "🧬 <b>Физиологические состояния</b>\n\n"
-            active = [s for s in states if s.detected]
-            if not active:
-                text += "✅ Все показатели в норме. Продолжай в том же духе! 💪"
-            else:
-                for s in active:
-                    text += f"{s.emoji} <b>{s.state_type}</b>\n   {s.recommendation}\n\n"
+            states = state_detector.detect_states(aggregates, profile)
+            text = format_states(states)
             
             await self._safe_edit_message(query, text, get_back_keyboard(CALLBACK_METRICS_BACK_TO_MENU))
         except Exception as e:
@@ -270,7 +417,7 @@ class MetricsHandlers:
         return STATE_ANALYTICS
 
     # ============================================================
-    # ПОШАГОВЫЙ СБОР МЕТРИК (Восстановленный FSM)
+    # ПОШАГОВЫЙ СБОР МЕТРИК (FSM)
     # ============================================================
     async def _start_sleep_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
@@ -566,8 +713,12 @@ class MetricsHandlers:
             return STATE_EDIT_MENU if self._is_edit_mode(context) else STATE_MAIN_MENU
 
         self._clear_metrics(context)
-        from handlers.start.handlers import show_diary
-        await show_diary(update, context)
+        # Возврат в дневник (предполагается, что функция show_diary есть в start)
+        try:
+            from handlers.start.handlers import show_diary
+            await show_diary(update, context)
+        except Exception:
+            await query.edit_message_text("✅ Данные сохранены! Отправь /start чтобы вернуться в меню.")
         return ConversationHandler.END
 
     async def back_to_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -579,8 +730,11 @@ class MetricsHandlers:
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         self._clear_metrics(context)
-        from handlers.start.handlers import show_diary
-        await show_diary(update, context)
+        try:
+            from handlers.start.handlers import show_diary
+            await show_diary(update, context)
+        except Exception:
+            pass
         return ConversationHandler.END
 
     async def _back_to_diary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -614,10 +768,13 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
             STATE_ANALYTICS: [
                 CallbackQueryHandler(h.handle_analytics, pattern=rf"^(analytics_|{CALLBACK_METRICS_BACK_TO_MENU}|{CALLBACK_BACK_TO_ANALYTICS})"),
             ],
+            STATE_HISTORY: [
+                CallbackQueryHandler(h.process_history_date, pattern=r"^history_date_"),
+                CallbackQueryHandler(h.back_to_main_menu, pattern=rf"^{CALLBACK_METRICS_BACK_TO_MENU}$"),
+            ],
             STATE_SLEEP_HOURS: [
                 CallbackQueryHandler(h.process_sleep_hours, pattern=r"^sleep"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
-                CallbackQueryHandler(h.back_to_main_menu, pattern=rf"^{CALLBACK_BACK_TO_MAIN}$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_sleep_hours),
             ],
             STATE_SLEEP_QUALITY: [
@@ -629,15 +786,15 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
             ],
             STATE_ENERGY_MORNING: [
-                CallbackQueryHandler(h.process_energy_morning, pattern=r"^(energy_morning_|edit_energy_morning_)"),
+                CallbackQueryHandler(h.process_energy_morning, pattern=r"^energy_morning_"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
             ],
             STATE_ENERGY_EVENING: [
-                CallbackQueryHandler(h.process_energy_evening, pattern=r"^(energy_evening_|edit_energy_evening_)"),
+                CallbackQueryHandler(h.process_energy_evening, pattern=r"^energy_evening_"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
             ],
             STATE_STRESS: [
-                CallbackQueryHandler(h.process_stress, pattern=r"^(stress_|edit_stress_)"),
+                CallbackQueryHandler(h.process_stress, pattern=r"^stress_"),
                 CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
             ],
             STATE_STEPS: [
@@ -667,12 +824,10 @@ def get_metrics_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.confirm_and_save, pattern=rf"^{CALLBACK_CONFIRM_ALL}$"),
                 CallbackQueryHandler(h._show_edit_menu, pattern=rf"^{CALLBACK_METRICS_EDIT}$"),
                 CallbackQueryHandler(h.cancel, pattern=rf"^({CALLBACK_CANCEL}|{CALLBACK_METRICS_BACK_TO_DIARY})$"),
-                CallbackQueryHandler(h.back_to_edit_menu, pattern=rf"^{CALLBACK_BACK_TO_EDIT}$"),
             ],
         },
         fallbacks=[
             CallbackQueryHandler(h.cancel, pattern=rf"^{CALLBACK_CANCEL}$"),
-            CallbackQueryHandler(h._back_to_diary, pattern=rf"^{CALLBACK_METRICS_BACK_TO_DIARY}$"),
             MessageHandler(filters.COMMAND, h.cancel),
         ],
         allow_reentry=True,
