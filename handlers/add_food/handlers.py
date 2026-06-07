@@ -126,9 +126,17 @@ class AddFoodHandlers:
             "🎤 Голосовое сообщение\n"
             "📷 Фото штрихкода или упаковки\n"
             "✍️ Название (например, «гречка с котлетой 300г»)\n"
-            "📋 Или данные по шаблону (Название 300г 500ккал Б20 Ж10 У50)\n\n"
+            "📋 Или данные по шаблону:\n\n"
+            "<b>Вариант 1 (многострочный, нажми чтобы скопировать):</b>\n"
+            "<pre>Гречка с котлетой\n"
+            "350г\n"
+            "578 ккал\n"
+            "Б: 33.3 Ж: 28.7 У: 49</pre>\n\n"
+            "<b>Вариант 2 (в одну строку):</b>\n"
+            "<code>Гречка с котлетой 350г 578ккал Б33 Ж28 У49</code>\n\n"
             "<i>Я сам пойму формат и всё посчитаю! 🧠</i>"
         )
+        
         target = query.edit_message_text if query else update.message.reply_text
         await target(text, reply_markup=get_universal_input_keyboard(), parse_mode="HTML")
         return STATE_UNIVERSAL_INPUT
