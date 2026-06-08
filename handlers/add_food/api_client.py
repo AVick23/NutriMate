@@ -1,4 +1,7 @@
-# api_client.py
+"""
+Клиент для работы с Open Food Facts API.
+🎯 Обновлено: определение жидкостей, кэширование пустых результатов, улучшенная локализация.
+"""
 import asyncio
 import httpx
 import logging
@@ -189,6 +192,9 @@ class OpenFoodFactsClient:
 
         quantity = product.get("quantity")
         default_weight = self._parse_default_weight(quantity)
+        
+        # 🎯 Определяем, является ли продукт жидкостью
+        is_liquid = self._is_liquid_product(product)
 
         return {
             "code": product.get("code", ""),
@@ -202,6 +208,7 @@ class OpenFoodFactsClient:
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
             "is_russian": True,  # Помечаем как российский товар
+            "is_liquid": is_liquid,
         }
 
     async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
@@ -278,6 +285,9 @@ class OpenFoodFactsClient:
         
         if not is_russian:
             logger.warning(f"⚠️ Product {name} is NOT from Russia (countries: {countries_tags})")
+        
+        # 🎯 Определяем, является ли продукт жидкостью
+        is_liquid = self._is_liquid_product(product)
 
         return {
             "code": product.get("code", ""),
@@ -291,7 +301,37 @@ class OpenFoodFactsClient:
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
             "is_russian": is_russian,
+            "is_liquid": is_liquid,
         }
+
+    def _is_liquid_product(self, product: Dict[str, Any]) -> bool:
+        """
+        🎯 Определяет, является ли продукт жидкостью для трекинга воды.
+        Проверяет категории продукта.
+        """
+        categories_tags = product.get("categories_tags", [])
+        categories_tags_en = product.get("categories_tags_en", [])
+        
+        # Теги жидкостей
+        liquid_tags = {
+            "en:beverages", "beverages",
+            "en:water", "water",
+            "en:teas", "teas",
+            "en:coffees", "coffees",
+            "en:fruit-juices", "fruit-juices",
+            "en:soups", "soups",
+            "en:milk", "milk",
+            "en:soft-drinks", "soft-drinks",
+            "en:energy-drinks", "energy-drinks",
+            "en:alcoholic-beverages", "alcoholic-beverages",
+        }
+        
+        # Проверяем оба списка тегов
+        for tag in categories_tags + categories_tags_en:
+            if tag.lower() in liquid_tags:
+                return True
+        
+        return False
 
     def _parse_default_weight(self, quantity: Optional[Any]) -> float:
         """Извлекает вес из строки формата '500 g', '400гр.', '1 kg'."""
@@ -327,6 +367,7 @@ class OpenFoodFactsClient:
             "fat": round(product.get("fat_100g", 0) * multiplier, 1),
             "carbs": round(product.get("carbs_100g", 0) * multiplier, 1),
             "image_url": product.get("image_url"),
+            "is_liquid": product.get("is_liquid", False),
         }
 
     def _add_to_cache(self, key: str, products: List[Dict[str, Any]]):

@@ -1,6 +1,6 @@
 """
 Клавиатуры для добавления еды.
-Обновлено для Универсального ввода (Apple-like UX).
+🎯 Обновлено: добавлена клавиатура для трекинга воды.
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Dict, Any
@@ -13,7 +13,9 @@ from .constants import (
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
     CALLBACK_NOOP, CALLBACK_MANUAL_SKIP, CALLBACK_MANUAL_CONFIRM, CALLBACK_MANUAL_EDIT,
+    CALLBACK_TRACK_WATER_YES, CALLBACK_TRACK_WATER_NO,
 )
+
 
 def get_select_method_keyboard() -> InlineKeyboardMarkup:
     """🎯 Главное меню: всего 3 кнопки действий + выход."""
@@ -24,11 +26,13 @@ def get_select_method_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📔 ← В дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
+
 def get_universal_input_keyboard() -> InlineKeyboardMarkup:
     """Минималистичная клавиатура во время ожидания ввода."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отменить", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
+
 
 def get_product_selection_keyboard(
     products: List[Dict[str, Any]],
@@ -41,18 +45,22 @@ def get_product_selection_keyboard(
     start_idx = page * PAGE_SIZE
     end_idx = start_idx + PAGE_SIZE
     page_products = products[start_idx:end_idx]
-
+    
     buttons = []
+    
     for i, product in enumerate(page_products):
         real_index = start_idx + i
         name = product.get("name", "Без названия")[:32]
         brand = product.get("brand", "")
         kcal = product.get("kcal_100g", 0)
-
+        
+        # 🎯 Индикатор жидкости
+        liquid_icon = "💧 " if product.get("is_liquid") else ""
+        
         if brand and str(brand).strip():
-            button_text = f"{i + 1}. {name} · {str(brand)[:12]} · {kcal:.0f}ккал"
+            button_text = f"{i + 1}. {liquid_icon}{name} · {str(brand)[:12]} · {kcal:.0f}ккал"
         else:
-            button_text = f"{i + 1}. {name} · {kcal:.0f}ккал/100г"
+            button_text = f"{i + 1}. {liquid_icon}{name} · {kcal:.0f}ккал/100г"
 
         buttons.append([
             InlineKeyboardButton(button_text, callback_data=f"{CALLBACK_SELECT_PRODUCT}{real_index}")
@@ -69,6 +77,7 @@ def get_product_selection_keyboard(
     buttons.append([InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)])
 
     return InlineKeyboardMarkup(buttons)
+
 
 def get_weight_input_keyboard(product_name: str = "") -> InlineKeyboardMarkup:
     """Клавиатура выбора веса."""
@@ -90,11 +99,13 @@ def get_weight_input_keyboard(product_name: str = "") -> InlineKeyboardMarkup:
         ],
     ])
 
+
 def get_custom_weight_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("← К вариантам веса", callback_data=CALLBACK_BACK_TO_WEIGHT)],
         [InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN)],
     ])
+
 
 def get_meal_type_keyboard() -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(label, callback_data=f"{CALLBACK_MEAL_PREFIX}{meal_type}")] for meal_type, label in MEAL_TYPES.items()]
@@ -103,6 +114,7 @@ def get_meal_type_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN),
     ])
     return InlineKeyboardMarkup(buttons)
+
 
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -114,6 +126,7 @@ def get_confirm_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📔 Отмена (в дневник)", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
+
 def get_save_favorite_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
@@ -122,6 +135,7 @@ def get_save_favorite_keyboard() -> InlineKeyboardMarkup:
         ],
     ])
 
+
 def get_after_add_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🍽️ Добавить ещё", callback_data=CALLBACK_ADD_ANOTHER)],
@@ -129,15 +143,27 @@ def get_after_add_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📔 Вернуться в дневник", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
+
 def get_manual_skip_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⏭ Пропустить", callback_data=CALLBACK_MANUAL_SKIP)],
         [InlineKeyboardButton("🔙 ← Назад", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
 
+
 def get_manual_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Всё верно", callback_data=CALLBACK_MANUAL_CONFIRM)],
         [InlineKeyboardButton("✏️ Изменить", callback_data=CALLBACK_MANUAL_EDIT)],
         [InlineKeyboardButton("📔 Отмена", callback_data=CALLBACK_BACK_TO_DIARY)],
+    ])
+
+
+def get_water_tracking_keyboard() -> InlineKeyboardMarkup:
+    """🎯 Клавиатура для предложения трекинга воды."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💧 Да, засчитать", callback_data=CALLBACK_TRACK_WATER_YES),
+            InlineKeyboardButton("👌 Нет", callback_data=CALLBACK_TRACK_WATER_NO),
+        ],
     ])

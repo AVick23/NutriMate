@@ -1,8 +1,7 @@
 """
 Состояния FSM и callback-данные для добавления еды.
-Обновлено для Универсального ввода (Apple-like UX).
+🎯 Обновлено: добавлены callback для трекинга воды.
 """
-
 # ============ Состояния ConversationHandler ============
 (
     STATE_SELECT_METHOD,       # Главное меню (3 кнопки)
@@ -65,6 +64,11 @@ CALLBACK_SAVE_FAVORITE_NO = "food_save_favorite_no"
 CALLBACK_MANUAL_SKIP = "food_manual_skip"
 CALLBACK_MANUAL_CONFIRM = "food_manual_confirm"
 CALLBACK_MANUAL_EDIT = "food_manual_edit"
+CALLBACK_MANUAL_BARCODE = "food_manual_barcode"
+
+# ============ Callback: трекинг воды ============
+CALLBACK_TRACK_WATER_YES = "food_track_water_yes"
+CALLBACK_TRACK_WATER_NO = "food_track_water_no"
 
 # ============ Callback: служебные ============
 CALLBACK_NOOP = "food_noop"
