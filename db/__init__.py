@@ -1,9 +1,5 @@
 """
 Модуль работы с базой данных.
-
-Содержит:
-- Database — ядро работы с SQLite
-- Все репозитории для доступа к данным в одном файле repositories.py
 """
 from db.database import Database
 from db.repositories import (
@@ -19,6 +15,7 @@ from db.repositories import (
     PatternsRepository,
     ModifierHistoryRepository,
     AnalyticsSettingsRepository,
+    MeasurementsRepository,  # 🎯 Добавлено
 )
 
 __all__ = [
@@ -35,4 +32,5 @@ __all__ = [
     "PatternsRepository",
     "ModifierHistoryRepository",
     "AnalyticsSettingsRepository",
+    "MeasurementsRepository",  # 🎯 Добавлено
 ]

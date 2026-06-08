@@ -417,6 +417,11 @@ class RegistrationHandlers:
         }
         await self.user_repo.save_profile(user_id, profile_data)
 
+        # 🎯 НОВОЕ: Сохраняем стартовый вес как первый замер в body_measurements
+        from db.repositories import MeasurementsRepository
+        measurements_repo = MeasurementsRepository(self.db)
+        await measurements_repo.add_measurement(user_id, 1, weight)  # 1 = weight
+
         # Сохраняем в контекст для быстрого доступа
         context.user_data["user_id"] = user_id
         context.user_data["daily_kcal"] = target_kcal
@@ -427,10 +432,8 @@ class RegistrationHandlers:
 
         # Очищаем временные данные
         for key in ["reg_age", "reg_height", "reg_weight", "reg_activity",
-                    "reg_goal", "reg_pace", "reg_gender"]:
+                     "reg_goal", "reg_pace", "reg_gender"]:
             context.user_data.pop(key, None)
-
-        # handlers/registration/handlers.py - в _complete_registration
 
         text = (
             "🎉 <b>Профиль создан! Спасибо!</b>\n\n"

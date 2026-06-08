@@ -1,5 +1,3 @@
-# handlers/settings/constants.py
-
 # Состояния ConversationHandler для редактирования профиля
 (
     STATE_EDIT_MENU,
@@ -9,8 +7,9 @@
     STATE_EDIT_GENDER,
     STATE_EDIT_ACTIVITY,
     STATE_EDIT_GOAL,
+    STATE_EDIT_PACE,       # 🎯 Новый стейт
     STATE_CONFIRM_SAVE,
-) = range(8)
+) = range(9)               # 🎯 Увеличено с 8 до 9
 
 # Callback данные для меню настроек
 CALLBACK_SETTINGS_MENU = "settings_menu"
@@ -27,6 +26,7 @@ CALLBACK_EDIT_AGE = "edit_age"
 CALLBACK_EDIT_GENDER = "edit_gender"
 CALLBACK_EDIT_ACTIVITY = "edit_activity"
 CALLBACK_EDIT_GOAL = "edit_goal"
+CALLBACK_EDIT_PACE = "edit_pace"   # 🎯 Новый callback
 CALLBACK_EDIT_ALL = "edit_all"
 
 # Callback для подтверждения

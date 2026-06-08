@@ -1,22 +1,37 @@
-# handlers/settings/handlers.py
+"""
+Обработчики для меню настроек пользователя.
+🎯 Обновлено: исправлен баг с Pace, добавлено редактирование темпа,
+   MeasurementsRepository импортируется из db.repositories.
+"""
 import logging
 from typing import Optional
-
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.repositories import UserRepository
+from db.repositories import UserRepository, MeasurementsRepository
 from handlers.registration.utils import (
     Gender, ActivityLevel, Goal, Pace,
     calculate_bmr, calculate_tdee, calculate_target_kcal, calculate_macros,
-    ACTIVITY_NAMES, GOAL_NAMES, GENDER_NAMES
+    ACTIVITY_NAMES, GOAL_NAMES, GENDER_NAMES,
+    PACE_NAMES, PACE_NAMES_GAIN,
 )
-from .constants import *
+from .constants import (
+    STATE_EDIT_MENU, STATE_EDIT_WEIGHT, STATE_EDIT_HEIGHT, STATE_EDIT_AGE,
+    STATE_EDIT_GENDER, STATE_EDIT_ACTIVITY, STATE_EDIT_GOAL, STATE_EDIT_PACE,
+    STATE_CONFIRM_SAVE,
+    CALLBACK_SETTINGS_MENU, CALLBACK_EDIT_PROFILE, CALLBACK_EDIT_WATER,
+    CALLBACK_EXPORT_DATA, CALLBACK_DELETE_DATA, CALLBACK_BACK_TO_DIARY,
+    CALLBACK_EDIT_WEIGHT, CALLBACK_EDIT_HEIGHT, CALLBACK_EDIT_AGE,
+    CALLBACK_EDIT_GENDER, CALLBACK_EDIT_ACTIVITY, CALLBACK_EDIT_GOAL,
+    CALLBACK_EDIT_PACE, CALLBACK_EDIT_ALL,
+    CALLBACK_SAVE_PROFILE, CALLBACK_CANCEL,
+)
 from .keyboards import (
     get_settings_main_keyboard, get_profile_edit_keyboard,
     get_confirm_save_keyboard, get_back_keyboard,
-    get_gender_keyboard, get_activity_keyboard, get_goal_keyboard
+    get_gender_keyboard, get_activity_keyboard, get_goal_keyboard,
+    get_pace_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,21 +41,23 @@ class SettingsHandlers:
     def __init__(self, db: Database):
         self.db = db
         self.user_repo = UserRepository(db)
+        self.measurements_repo = MeasurementsRepository(db)  # 🎯 из db.repositories
 
-    # ========== Главное меню настроек ==========
-
+    # ================================================================
+    # ГЛАВНОЕ МЕНЮ НАСТРОЕК
+    # ================================================================
     async def show_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Показывает главное меню настроек и возвращает состояние."""
         query = update.callback_query
         await query.answer()
 
-        text = "⚙️ <b>Настройки</b>\n\nЗдесь ты можешь изменить свои данные и предпочтения."
+        text = "⚙️  <b>Настройки</b>\n\nЗдесь ты можешь изменить свои данные и предпочтения."
         await query.edit_message_text(
             text,
             reply_markup=get_settings_main_keyboard(),
             parse_mode="HTML"
         )
-        return STATE_EDIT_MENU  # <-- обязательно вернуть состояние
+        return STATE_EDIT_MENU
 
     async def handle_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Обрабатывает выбор из главного меню настроек."""
@@ -60,7 +77,7 @@ class SettingsHandlers:
                 reply_markup=get_back_keyboard("settings_menu"),
                 parse_mode="HTML"
             )
-            return STATE_EDIT_MENU  # остаёмся в меню
+            return STATE_EDIT_MENU
 
         if data == CALLBACK_EXPORT_DATA:
             await query.edit_message_text(
@@ -81,8 +98,9 @@ class SettingsHandlers:
 
         return STATE_EDIT_MENU
 
-    # ========== Редактирование профиля ==========
-
+    # ================================================================
+    # РЕДАКТИРОВАНИЕ ПРОФИЛЯ
+    # ================================================================
     async def _start_edit_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Начинает редактирование профиля."""
         query = update.callback_query
@@ -95,12 +113,12 @@ class SettingsHandlers:
             return ConversationHandler.END
 
         # Получаем последний вес из замеров
-        from handlers.measurements.repository import MeasurementsRepository
-        meas_repo = MeasurementsRepository(self.db)
-        last_weight = await meas_repo.get_last_measurement(user_id, 1)
+        last_weight = await self.measurements_repo.get_last_measurement(user_id, 1)
         current_weight = last_weight["value"] if last_weight else 70.0
 
-        # Инициализация словаря без лишнего ключа weight_kg
+        # 🎯 Загружаем pace из БД (если есть)
+        saved_pace = profile.get("pace")
+
         context.user_data["edit_profile"] = {
             "weight_kg": current_weight,
             "height_cm": profile["height_cm"],
@@ -108,10 +126,11 @@ class SettingsHandlers:
             "gender": profile["gender"],
             "activity_level": profile["activity_level"],
             "goal": profile["goal"],
+            "pace": saved_pace,  # 🎯 сохраняем pace
         }
         context.user_data["edit_profile_original"] = context.user_data["edit_profile"].copy()
 
-        text = "👤 <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:"
+        text = "👤  <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:"
         await query.edit_message_text(
             text,
             reply_markup=get_profile_edit_keyboard(context.user_data["edit_profile"]),
@@ -133,28 +152,28 @@ class SettingsHandlers:
 
         if data == CALLBACK_EDIT_WEIGHT:
             await query.edit_message_text(
-                "✏️ <b>Введи свой текущий вес</b>\n\nНапример: <code>84.2</code>",
+                "✏️  <b>Введи свой текущий вес</b>\n\nНапример: <code>84.2</code>",
                 parse_mode="HTML"
             )
             return STATE_EDIT_WEIGHT
 
         if data == CALLBACK_EDIT_HEIGHT:
             await query.edit_message_text(
-                "✏️ <b>Введи свой рост</b> (в см)\n\nНапример: <code>180</code>",
+                "✏️  <b>Введи свой рост</b> (в см)\n\nНапример: <code>180</code>",
                 parse_mode="HTML"
             )
             return STATE_EDIT_HEIGHT
 
         if data == CALLBACK_EDIT_AGE:
             await query.edit_message_text(
-                "✏️ <b>Введи свой возраст</b> (лет)\n\nНапример: <code>30</code>",
+                "✏️  <b>Введи свой возраст</b> (лет)\n\nНапример: <code>30</code>",
                 parse_mode="HTML"
             )
             return STATE_EDIT_AGE
 
         if data == CALLBACK_EDIT_GENDER:
             await query.edit_message_text(
-                "👤 <b>Выбери пол</b>",
+                "👤  <b>Выбери пол</b>",
                 reply_markup=get_gender_keyboard(),
                 parse_mode="HTML"
             )
@@ -162,7 +181,7 @@ class SettingsHandlers:
 
         if data == CALLBACK_EDIT_ACTIVITY:
             await query.edit_message_text(
-                "🏃 <b>Выбери уровень активности</b>",
+                "🏃  <b>Выбери уровень активности</b>",
                 reply_markup=get_activity_keyboard(),
                 parse_mode="HTML"
             )
@@ -170,16 +189,27 @@ class SettingsHandlers:
 
         if data == CALLBACK_EDIT_GOAL:
             await query.edit_message_text(
-                "🎯 <b>Выбери цель</b>",
+                "🎯  <b>Выбери цель</b>",
                 reply_markup=get_goal_keyboard(),
                 parse_mode="HTML"
             )
             return STATE_EDIT_GOAL
 
+        # 🎯 НОВОЕ: Редактирование темпа
+        if data == CALLBACK_EDIT_PACE:
+            goal = Goal(context.user_data["edit_profile"]["goal"])
+            await query.edit_message_text(
+                "⏱️  <b>Выбери темп достижения цели</b>",
+                reply_markup=get_pace_keyboard(goal),
+                parse_mode="HTML"
+            )
+            return STATE_EDIT_PACE
+
         return STATE_EDIT_MENU
 
-    # ========== Ввод новых значений ==========
-
+    # ================================================================
+    # ВВОД НОВЫХ ЗНАЧЕНИЙ
+    # ================================================================
     async def process_new_weight(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         try:
             weight = float(update.message.text.replace(',', '.'))
@@ -237,6 +267,20 @@ class SettingsHandlers:
         query = update.callback_query
         goal_value = query.data.replace("set_goal_", "")
         context.user_data["edit_profile"]["goal"] = goal_value
+
+        # 🎯 Если цель "поддерживать", сбрасываем pace (он не нужен)
+        if goal_value == "maintain":
+            context.user_data["edit_profile"]["pace"] = None
+
+        await self._show_edit_menu(update, context)
+        return STATE_EDIT_MENU
+
+    # 🎯 НОВОЕ: Обработка выбора темпа
+    async def process_new_pace(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        pace_value = query.data.replace("set_pace_", "")
+        context.user_data["edit_profile"]["pace"] = pace_value
         await self._show_edit_menu(update, context)
         return STATE_EDIT_MENU
 
@@ -245,17 +289,20 @@ class SettingsHandlers:
         if update.callback_query:
             query = update.callback_query
             await query.edit_message_text(
-                "👤 <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:",
+                "👤  <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:",
                 reply_markup=get_profile_edit_keyboard(context.user_data["edit_profile"]),
                 parse_mode="HTML"
             )
         else:
             await update.message.reply_text(
-                "👤 <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:",
+                "👤  <b>Редактирование профиля</b>\n\nВыбери, что хочешь изменить:",
                 reply_markup=get_profile_edit_keyboard(context.user_data["edit_profile"]),
                 parse_mode="HTML"
             )
 
+    # ================================================================
+    # ПОДТВЕРЖДЕНИЕ И СОХРАНЕНИЕ
+    # ================================================================
     async def _confirm_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
         edited = context.user_data["edit_profile"]
@@ -275,11 +322,32 @@ class SettingsHandlers:
         if edited["goal"] != original["goal"]:
             changes.append(f"🎯 Цель: {GOAL_NAMES[Goal(original['goal'])]} → {GOAL_NAMES[Goal(edited['goal'])]}")
 
+        # 🎯 Показываем изменение темпа (если есть и цель не maintain)
+        if edited.get("goal") != "maintain" and edited.get("pace") != original.get("pace"):
+            goal = Goal(edited["goal"])
+            names = PACE_NAMES_GAIN if goal == Goal.GAIN else PACE_NAMES
+            
+            old_pace_name = "Не выбран"
+            new_pace_name = "Не выбран"
+            
+            if original.get("pace"):
+                try:
+                    old_pace_name = names[Pace(original["pace"])]
+                except:
+                    pass
+            if edited.get("pace"):
+                try:
+                    new_pace_name = names[Pace(edited["pace"])]
+                except:
+                    pass
+            
+            changes.append(f"⏱️ Темп: {old_pace_name} → {new_pace_name}")
+
         if not changes:
             await query.edit_message_text("Нет изменений. Возврат в меню.")
             return await self._start_edit_profile(update, context)
 
-        text = "🔄 <b>Подтверди изменения</b>\n\n" + "\n".join(changes) + "\n\nПересчитать нормы КБЖУ?"
+        text = "🔄  <b>Подтверди изменения</b>\n\n" + "\n".join(changes) + "\n\nПересчитать нормы КБЖУ?"
         await query.edit_message_text(
             text,
             reply_markup=get_confirm_save_keyboard(),
@@ -294,15 +362,26 @@ class SettingsHandlers:
 
         edited = context.user_data["edit_profile"]
 
-        from handlers.measurements.repository import MeasurementsRepository
-        meas_repo = MeasurementsRepository(self.db)
-        await meas_repo.add_measurement(user_id, 1, edited["weight_kg"])
+        # Сохраняем новый вес как замер
+        await self.measurements_repo.add_measurement(user_id, 1, edited["weight_kg"])
 
-        # Обновляем профиль (сразу все поля)
+        # 🎯 ИСПРАВЛЕНИЕ БАГА: достаём сохранённый pace из редактирования
+        # Приоритет: 1) из edit_profile 2) из оригинала (из БД) 3) fallback STEADY
+        pace_value = edited.get("pace")
+        if pace_value:
+            pace = Pace(pace_value)
+        else:
+            # Если цель maintain, pace может быть None
+            goal_enum = Goal(edited["goal"])
+            if goal_enum == Goal.MAINTAIN:
+                pace = Pace.STEADY  # Не используется, но нужен для расчёта
+            else:
+                pace = Pace.STEADY  # Fallback
+
         bmr = calculate_bmr(edited["weight_kg"], edited["height_cm"], edited["age"], Gender(edited["gender"]))
         tdee = calculate_tdee(bmr, ActivityLevel(edited["activity_level"]))
         goal_enum = Goal(edited["goal"])
-        pace = Pace.STEADY
+        
         target_kcal = calculate_target_kcal(tdee, goal_enum, pace)
         macros = calculate_macros(target_kcal, edited["weight_kg"], goal_enum)
 
@@ -312,6 +391,7 @@ class SettingsHandlers:
             "gender": edited["gender"],
             "activity_level": edited["activity_level"],
             "goal": edited["goal"],
+            "pace": pace.value if goal_enum != Goal.MAINTAIN else None,  # 🎯 сохраняем pace
             "bmr": bmr,
             "daily_kcal": target_kcal,
             "daily_protein_g": macros["protein_g"],
@@ -320,14 +400,22 @@ class SettingsHandlers:
         }
         await self.user_repo.save_profile(user_id, profile_data)
 
+        # Формируем отображаемое имя темпа
+        if goal_enum != Goal.MAINTAIN and pace:
+            names = PACE_NAMES_GAIN if goal_enum == Goal.GAIN else PACE_NAMES
+            pace_display = names[pace]
+        else:
+            pace_display = "—"
+
         text = (
-            "✅ <b>Профиль обновлён!</b>\n\n"
+            "✅  <b>Профиль обновлён!</b>\n\n"
             f"📏 Рост: {edited['height_cm']} см\n"
             f"🎂 Возраст: {edited['age']} лет\n"
             f"👤 Пол: {GENDER_NAMES[Gender(edited['gender'])]}\n"
             f"🏃 Активность: {ACTIVITY_NAMES[ActivityLevel(edited['activity_level'])]}\n"
-            f"🎯 Цель: {GOAL_NAMES[Goal(edited['goal'])]}\n\n"
-            f"🔥 <b>Новые нормы:</b>\n"
+            f"🎯 Цель: {GOAL_NAMES[Goal(edited['goal'])]}\n"
+            f"⏱️ Темп: {pace_display}\n\n"
+            f"🔥  <b>Новые нормы:</b>\n"
             f"Калории: {target_kcal} ккал\n"
             f"Белки: {macros['protein_g']} г\n"
             f"Жиры: {macros['fat_g']} г\n"
@@ -343,6 +431,9 @@ class SettingsHandlers:
         context.user_data.pop("edit_profile_original", None)
         return ConversationHandler.END
 
+    # ================================================================
+    # ОТМЕНА И ВОЗВРАТ
+    # ================================================================
     async def cancel_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
         await query.answer()
@@ -356,6 +447,9 @@ class SettingsHandlers:
         await show_diary(update, context)
 
 
+# ================================================================
+# РЕГИСТРАЦИЯ ConversationHandler
+# ================================================================
 def get_settings_handler(db: Database) -> ConversationHandler:
     handlers = SettingsHandlers(db)
 
@@ -365,7 +459,7 @@ def get_settings_handler(db: Database) -> ConversationHandler:
         ],
         states={
             STATE_EDIT_MENU: [
-                CallbackQueryHandler(handlers.handle_settings_menu, pattern="^settings_"),  # главное меню
+                CallbackQueryHandler(handlers.handle_settings_menu, pattern="^settings_"),
                 CallbackQueryHandler(handlers.handle_edit_menu, pattern="^(edit_|save_profile|cancel_edit)"),
             ],
             STATE_EDIT_WEIGHT: [
@@ -390,6 +484,11 @@ def get_settings_handler(db: Database) -> ConversationHandler:
             ],
             STATE_EDIT_GOAL: [
                 CallbackQueryHandler(handlers.process_new_goal, pattern="^set_goal_"),
+                CallbackQueryHandler(handlers.cancel_edit, pattern="^cancel_edit$"),
+            ],
+            # 🎯 НОВЫЙ СТЕЙТ для темпа
+            STATE_EDIT_PACE: [
+                CallbackQueryHandler(handlers.process_new_pace, pattern="^set_pace_"),
                 CallbackQueryHandler(handlers.cancel_edit, pattern="^cancel_edit$"),
             ],
             STATE_CONFIRM_SAVE: [
