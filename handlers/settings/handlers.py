@@ -1,7 +1,7 @@
 """
 Обработчики для меню настроек пользователя.
-🎯 Обновлено: исправлен баг с Pace, добавлено редактирование темпа,
-   MeasurementsRepository импортируется из db.repositories.
+🎯 Обновлено: исправлен импорт MeasurementsRepository (из db), 
+   исправлен баг с Pace, добавлено редактирование темпа.
 """
 import logging
 from typing import Optional
@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 
 from db.database import Database
-from db.repositories import UserRepository, MeasurementsRepository
+from db.repositories import UserRepository, MeasurementsRepository  # 🎯 Правильный импорт
 from handlers.registration.utils import (
     Gender, ActivityLevel, Goal, Pace,
     calculate_bmr, calculate_tdee, calculate_target_kcal, calculate_macros,
@@ -41,7 +41,7 @@ class SettingsHandlers:
     def __init__(self, db: Database):
         self.db = db
         self.user_repo = UserRepository(db)
-        self.measurements_repo = MeasurementsRepository(db)  # 🎯 из db.repositories
+        self.measurements_repo = MeasurementsRepository(db)  # 🎯 Инициализация здесь
 
     # ================================================================
     # ГЛАВНОЕ МЕНЮ НАСТРОЕК
@@ -112,11 +112,11 @@ class SettingsHandlers:
             await query.edit_message_text("❌ Профиль не найден. Начни с /start")
             return ConversationHandler.END
 
-        # Получаем последний вес из замеров
+        # 🎯 Используем self.measurements_repo (без локального импорта!)
         last_weight = await self.measurements_repo.get_last_measurement(user_id, 1)
         current_weight = last_weight["value"] if last_weight else 70.0
 
-        # 🎯 Загружаем pace из БД (если есть)
+        # 🎯 Загружаем pace из БД
         saved_pace = profile.get("pace")
 
         context.user_data["edit_profile"] = {
@@ -322,7 +322,7 @@ class SettingsHandlers:
         if edited["goal"] != original["goal"]:
             changes.append(f"🎯 Цель: {GOAL_NAMES[Goal(original['goal'])]} → {GOAL_NAMES[Goal(edited['goal'])]}")
 
-        # 🎯 Показываем изменение темпа (если есть и цель не maintain)
+        # 🎯 Показываем изменение темпа
         if edited.get("goal") != "maintain" and edited.get("pace") != original.get("pace"):
             goal = Goal(edited["goal"])
             names = PACE_NAMES_GAIN if goal == Goal.GAIN else PACE_NAMES
@@ -362,19 +362,17 @@ class SettingsHandlers:
 
         edited = context.user_data["edit_profile"]
 
-        # Сохраняем новый вес как замер
+        # 🎯 Используем self.measurements_repo (без локального импорта!)
         await self.measurements_repo.add_measurement(user_id, 1, edited["weight_kg"])
 
-        # 🎯 ИСПРАВЛЕНИЕ БАГА: достаём сохранённый pace из редактирования
-        # Приоритет: 1) из edit_profile 2) из оригинала (из БД) 3) fallback STEADY
+        # 🎯 ИСПРАВЛЕНИЕ БАГА: достаём сохранённый pace
         pace_value = edited.get("pace")
         if pace_value:
             pace = Pace(pace_value)
         else:
-            # Если цель maintain, pace может быть None
             goal_enum = Goal(edited["goal"])
             if goal_enum == Goal.MAINTAIN:
-                pace = Pace.STEADY  # Не используется, но нужен для расчёта
+                pace = Pace.STEADY
             else:
                 pace = Pace.STEADY  # Fallback
 
@@ -391,7 +389,7 @@ class SettingsHandlers:
             "gender": edited["gender"],
             "activity_level": edited["activity_level"],
             "goal": edited["goal"],
-            "pace": pace.value if goal_enum != Goal.MAINTAIN else None,  # 🎯 сохраняем pace
+            "pace": pace.value if goal_enum != Goal.MAINTAIN else None,
             "bmr": bmr,
             "daily_kcal": target_kcal,
             "daily_protein_g": macros["protein_g"],
@@ -486,7 +484,6 @@ def get_settings_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(handlers.process_new_goal, pattern="^set_goal_"),
                 CallbackQueryHandler(handlers.cancel_edit, pattern="^cancel_edit$"),
             ],
-            # 🎯 НОВЫЙ СТЕЙТ для темпа
             STATE_EDIT_PACE: [
                 CallbackQueryHandler(handlers.process_new_pace, pattern="^set_pace_"),
                 CallbackQueryHandler(handlers.cancel_edit, pattern="^cancel_edit$"),
