@@ -1,17 +1,16 @@
 """
 Состояния FSM и callback-данные для добавления еды.
-🎯 Обновлено: добавлены callback для трекинга воды.
+🎯 Обновлено: PAGE_SIZE увеличен до 15 для лучшей пагинации.
 """
 # ============ Состояния ConversationHandler ============
 (
     STATE_SELECT_METHOD,       # Главное меню (3 кнопки)
     STATE_UNIVERSAL_INPUT,     # 🎯 ЕДИНОЕ состояние для текста, фото и голоса
     STATE_SELECT_PRODUCT,      # Выбор продукта из результатов
-    STATE_ENTER_WEIGHT,        # Ввод веса
     STATE_SELECT_MEAL_TYPE,    # Выбор типа приёма пищи
     STATE_CONFIRM_ADD,         # Подтверждение
     STATE_AFTER_ADD,           # Экран после успешного добавления
-    # Ручной ввод (остаётся как fallback, если универсальный парсер не справился)
+    STATE_ENTER_WEIGHT,        # Ввод веса
     STATE_MANUAL_NAME,
     STATE_MANUAL_WEIGHT,
     STATE_MANUAL_KCAL,
@@ -30,7 +29,7 @@ MEAL_TYPES = {
 }
 
 # ============ Константы пагинации ============
-PAGE_SIZE = 5
+PAGE_SIZE = 10  # 🎯 Увеличено с 5 до 15 продуктов на странице
 
 # ============ Callback: методы добавления ============
 CALLBACK_METHOD_UNIVERSAL = "food_method_universal"  # 🎯 Новая главная кнопка

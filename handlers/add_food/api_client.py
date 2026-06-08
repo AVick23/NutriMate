@@ -1,6 +1,6 @@
 """
 Клиент для работы с Open Food Facts API.
-🎯 Обновлено: определение жидкостей, кэширование пустых результатов, улучшенная локализация.
+🎯 Обновлено: page_size увеличен до 50 для лучшей пагинации.
 """
 import asyncio
 import httpx
@@ -57,7 +57,7 @@ class OpenFoodFactsClient:
         self,
         query: str,
         page: int = 1,
-        page_size: int = 5,
+        page_size: int = 50,  # 🎯 Увеличено с 5 до 50 для лучшей пагинации
     ) -> List[Dict[str, Any]]:
         """
         Полнотекстовый поиск через Search-a-licious (SAL).
@@ -65,6 +65,8 @@ class OpenFoodFactsClient:
         Приоритет:
         1. Российские товары на русском
         2. Глобальная база (если в России не найдено)
+        
+        🎯 Теперь запрашивает 50 продуктов за раз для полноценной пагинации.
         """
         cache_key = f"{query}:{page}:{page_size}"
 
@@ -109,7 +111,7 @@ class OpenFoodFactsClient:
         params = {
             "q": query,
             "page": page,
-            "page_size": page_size,
+            "page_size": page_size,  # 🎯 Использует переданный page_size (50)
             "countries_tags_contains": "russia",  # Только Россия
             "langs_contains": "russian",  # Только русский язык
         }
@@ -127,7 +129,7 @@ class OpenFoodFactsClient:
         params = {
             "q": query,
             "page": page,
-            "page_size": page_size,
+            "page_size": page_size,  # 🎯 Использует переданный page_size (50)
         }
 
         response = await self.client.get(self.SEARCH_URL_SAL, params=params)
