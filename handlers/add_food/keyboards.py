@@ -1,6 +1,6 @@
 """
 Клавиатуры для добавления еды.
-🎯 Обновлено: добавлена клавиатура для трекинга воды.
+🎯 Обновлено: добавлена клавиатура для трекинга воды, индикаторы жидкостей.
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Dict, Any
@@ -18,7 +18,6 @@ from .constants import (
 
 
 def get_select_method_keyboard() -> InlineKeyboardMarkup:
-    """🎯 Главное меню: всего 3 кнопки действий + выход."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить еду", callback_data=CALLBACK_METHOD_UNIVERSAL)],
         [InlineKeyboardButton("🔥 Популярные блюда", callback_data=CALLBACK_METHOD_POPULAR)],
@@ -28,7 +27,6 @@ def get_select_method_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_universal_input_keyboard() -> InlineKeyboardMarkup:
-    """Минималистичная клавиатура во время ожидания ввода."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отменить", callback_data=CALLBACK_BACK_TO_DIARY)],
     ])
@@ -39,24 +37,20 @@ def get_product_selection_keyboard(
     page: int = 0,
     query: str = "",
 ) -> InlineKeyboardMarkup:
-    """Клавиатура выбора продукта с пагинацией."""
     total_pages = max(1, (len(products) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     start_idx = page * PAGE_SIZE
     end_idx = start_idx + PAGE_SIZE
     page_products = products[start_idx:end_idx]
-    
     buttons = []
-    
+
     for i, product in enumerate(page_products):
         real_index = start_idx + i
         name = product.get("name", "Без названия")[:32]
         brand = product.get("brand", "")
         kcal = product.get("kcal_100g", 0)
-        
-        # 🎯 Индикатор жидкости
-        liquid_icon = "💧 " if product.get("is_liquid") else ""
-        
+        liquid_icon = "💧 " if product.get("is_liquid") else ""  # 🎯
+
         if brand and str(brand).strip():
             button_text = f"{i + 1}. {liquid_icon}{name} · {str(brand)[:12]} · {kcal:.0f}ккал"
         else:
@@ -75,12 +69,10 @@ def get_product_selection_keyboard(
 
     buttons.append([InlineKeyboardButton("🔍 Новый поиск", callback_data=CALLBACK_SEARCH_AGAIN)])
     buttons.append([InlineKeyboardButton("📔 В дневник", callback_data=CALLBACK_BACK_TO_DIARY)])
-
     return InlineKeyboardMarkup(buttons)
 
 
 def get_weight_input_keyboard(product_name: str = "") -> InlineKeyboardMarkup:
-    """Клавиатура выбора веса."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("50г", callback_data=f"{CALLBACK_WEIGHT_PREFIX}50"),

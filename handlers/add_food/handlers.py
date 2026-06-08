@@ -1,6 +1,6 @@
 """
 Обработчики для добавления еды с Универсальным вводом (Apple-like UX).
-🎯 Обновлено: умное распознавание штрихкодов, детектор жидкостей, ручной ввод кода.
+🎯 Обновлено: умное распознавание штрихкодов, детектор жидкостей, ручной ввод кода, трекинг воды.
 """
 import io
 import re
@@ -14,7 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler, MessageHandler, filters
 )
 from db.database import Database
-from db.repositories import UserRepository, MealRepository, FavoritesRepository, DailyStatsRepository
+from db.repositories import UserRepository, MealRepository, FavoritesRepository, DailyStatsRepository, WaterRepository
 from handlers.add_food.constants import (
     STATE_SELECT_METHOD, STATE_UNIVERSAL_INPUT, STATE_SELECT_PRODUCT,
     STATE_SELECT_MEAL_TYPE, STATE_CONFIRM_ADD, STATE_AFTER_ADD,
@@ -51,6 +51,7 @@ class AddFoodHandlers:
         self.user_repo = UserRepository(db)
         self.meal_repo = MealRepository(db)
         self.favorites_repo = FavoritesRepository(db)
+        self.water_repo = WaterRepository(db)  # 🎯 Для трекинга воды
         self.api_client = OpenFoodFactsClient()
         self.food_matcher = OptimizedFoodMatcher(POPULAR_FOODS, self.api_client)
         self.voice_recognizer = VoiceRecognizer()
@@ -66,7 +67,9 @@ class AddFoodHandlers:
         }
 
     def _clear_search_context(self, context: ContextTypes.DEFAULT_TYPE):
-        for key in ["search_results", "search_page", "selected_product", "calculated_food", "meal_type", "food_weight", "last_added_food", "food_search_query", "manual_product", "is_liquid", "liquid_volume"]:
+        for key in ["search_results", "search_page", "selected_product", "calculated_food", "meal_type",
+                     "food_weight", "last_added_food", "food_search_query", "manual_product",
+                     "is_liquid", "liquid_volume"]:
             context.user_data.pop(key, None)
 
     def _format_products_text(self, products: List[Dict[str, Any]], start_idx: int = 0) -> str:
@@ -79,10 +82,7 @@ class AddFoodHandlers:
             protein = product.get("protein_100g", 0)
             fat = product.get("fat_100g", 0)
             carbs = product.get("carbs_100g", 0)
-            
-            # 🎯 Индикатор жидкости
-            liquid_icon = "💧 " if product.get("is_liquid") else ""
-            
+            liquid_icon = "💧 " if product.get("is_liquid") else ""  # 🎯
             text += f"<b>{real_index + 1}</b> {liquid_icon}{name}{brand}\n"
             text += f"🔥 {kcal:.0f} ккал | 🍗 {protein:.1f}г | 🥑 {fat:.1f}г | 🍚 {carbs:.1f}г\n\n"
         text += "─" * 17 + "\n"
@@ -95,9 +95,7 @@ class AddFoodHandlers:
         query = update.callback_query
         if query:
             await query.answer()
-
         self._clear_search_context(context)
-
         text = "🍽️  <b>Добавление еды</b>\n\nВыбери действие:"
         target = query.edit_message_text if query else update.message.reply_text
         await target(text, reply_markup=get_select_method_keyboard(), parse_mode="HTML")
@@ -107,7 +105,6 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
         method = query.data
-
         if method == CALLBACK_METHOD_UNIVERSAL:
             return await self._start_universal_input(update, context)
         elif method == CALLBACK_METHOD_FAVORITES:
@@ -120,14 +117,12 @@ class AddFoodHandlers:
             return await self._show_popular_foods(update, context)
         elif method == CALLBACK_BACK_TO_DIARY:
             return await self._back_to_diary(update, context)
-
         return STATE_SELECT_METHOD
 
     async def _start_universal_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         query = update.callback_query
         if query:
             await query.answer()
-
         text = (
             "🍽️  <b>Что ты съел?</b>\n\n"
             "Просто отправь мне одним сообщением:\n"
@@ -136,7 +131,7 @@ class AddFoodHandlers:
             "✍️ Название (например, «гречка с котлетой 300г»)\n"
             "🔢 Или цифры штрихкода (например, <code>4600123456789</code>)\n\n"
             "📋 Или данные по шаблону:\n\n"
-            "<b>Вариант 1 (многострочный, нажми чтобы скопировать):</b>\n"
+            "<b>Вариант 1 (многострочный):</b>\n"
             "<code>Гречка с котлетой\n"
             "350г\n"
             "578 ккал\n"
@@ -145,7 +140,6 @@ class AddFoodHandlers:
             "<code>Гречка с котлетой 350г 578ккал Б33 Ж28 У49</code>\n\n"
             "<i>Я сам пойму формат и всё посчитаю! 🧠</i>"
         )
-        
         target = query.edit_message_text if query else update.message.reply_text
         await target(text, reply_markup=get_universal_input_keyboard(), parse_mode="HTML")
         return STATE_UNIVERSAL_INPUT
@@ -156,33 +150,21 @@ class AddFoodHandlers:
         if not message:
             return STATE_UNIVERSAL_INPUT
 
-        # 1. 🎤 ГОЛОС
         if message.voice or message.audio:
             return await self._handle_universal_voice(update, context)
-        
-        # 2. 📷 ФОТО (Штрихкод)
         elif message.photo:
             return await self._handle_universal_photo(update, context)
-        
-        # 3. ✍️ ТЕКСТ
         elif message.text:
             text = message.text.strip()
-            
-            # 🎯 3.0. Проверяем, не является ли это штрихкодом (8-14 цифр)
+            # 🎯 Проверяем, не является ли это штрихкодом (8-14 цифр)
             barcode_match = re.match(r'^\d{8,14}$', text)
             if barcode_match:
                 return await self._handle_barcode_text(update, context, text)
-            
-            # 3.1. Проверяем, не является ли это продвинутым шаблоном ручного ввода
             parsed_manual = parse_manual_template(text)
             if parsed_manual:
                 context.user_data["manual_product"] = parsed_manual
                 return await self._show_manual_confirmation(update, context)
-            
-            # 3.2. Иначе это обычный текстовый поиск
             return await self._handle_universal_text(update, context, text)
-        
-        # 4. ❌ НЕПОДХОДЯЩИЙ ФОРМАТ
         else:
             await message.reply_text(
                 "🤔 Я пока не умею это распознавать.\n\n"
@@ -192,62 +174,45 @@ class AddFoodHandlers:
             return STATE_UNIVERSAL_INPUT
 
     # ================================================================
-    # ВНУТРЕННИЕ ОБРАБОТЧИКИ УНИВЕРСАЛЬНОГО ВВОДА
+    # ВНУТРЕННИЕ ОБРАБОТЧИКИ
     # ================================================================
     async def _handle_universal_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         status_msg = await update.message.reply_text("👂  <b>Слушаю...</b>\n\nРаспознаю твоё голосовое сообщение...", parse_mode="HTML")
         recognized_text = await self.voice_recognizer.recognize(update, context)
-
         if not recognized_text:
             await status_msg.edit_text("❌  <b>Не удалось распознать</b>\n\nПопробуй ещё раз или напиши текстом.", reply_markup=get_universal_input_keyboard(), parse_mode="HTML")
             return STATE_UNIVERSAL_INPUT
-
         await status_msg.edit_text(f"🎤  <b>Я услышал:</b>\n<i>«{recognized_text}»</i>\n\n🔍 Ищу продукты...", parse_mode="HTML")
-        
         food_name, weight, unit = self.food_matcher.parse_quantity_from_text(recognized_text)
         context.user_data["food_search_query"] = food_name
         if weight and (not unit or unit == 'г'):
             context.user_data["food_weight"] = weight
-
         return await self._execute_search_and_show_results(update, context, food_name, status_msg)
 
     async def _handle_universal_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         status_msg = await update.message.reply_text("📷  <b>Сканирую штрихкод...</b>", parse_mode="HTML")
         barcode = await self._decode_barcode_from_photo(update, context)
-
         if not barcode:
-            # 🎯 Умный fallback: предлагаем ввести вручную или найти текстом
             await status_msg.edit_text(
                 "❌ Не удалось распознать штрихкод.\n\n"
-                "Попробуй:\n"
-                "• Сделать фото крупным планом\n"
-                "• Улучшить освещение\n"
-                "• Или выбери действие ниже:",
+                "Попробуй:\n• Сделать фото крупным планом\n• Улучшить освещение\n• Или выбери действие ниже:",
                 reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
             )
             return STATE_UNIVERSAL_INPUT
-
         await status_msg.edit_text(f"✅ Штрихкод: <code>{barcode}</code>\n\n🔍 Ищу продукт в базе...", parse_mode="HTML")
         product = await self.api_client.get_product_by_barcode(barcode)
-
         if not product:
             await status_msg.edit_text(
                 f"❌ Продукт со штрихкодом <code>{barcode}</code> не найден в базе.\n\nПопробуй найти через текстовый поиск.",
                 reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
             )
             return STATE_UNIVERSAL_INPUT
-
         context.user_data["selected_product"] = product
         context.user_data["search_results"] = [product]
         context.user_data["search_page"] = 0
-        
-        # 🎯 Определяем, является ли продукт жидкостью
-        is_liquid = product.get("is_liquid", False)
-        context.user_data["is_liquid"] = is_liquid
-        
+        context.user_data["is_liquid"] = product.get("is_liquid", False)
         await status_msg.delete()
-        
-        liquid_icon = "💧 " if is_liquid else ""
+        liquid_icon = "💧 " if product.get("is_liquid") else ""
         text = f"✅  <b>Продукт найден!</b>\n\n🍽 {liquid_icon}<b>{product['name']}</b>\n🔥 {product.get('kcal_100g', 0):.0f} ккал / 100г\n\nСколько грамм ты съел?"
         await update.message.reply_text(text, reply_markup=get_weight_input_keyboard(product['name']), parse_mode="HTML")
         return STATE_ENTER_WEIGHT
@@ -255,37 +220,26 @@ class AddFoodHandlers:
     async def _handle_barcode_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE, barcode: str) -> int:
         """🎯 Обработка ручного ввода штрихкода (8-14 цифр)."""
         status_msg = await update.message.reply_text(f"🔢 Штрихкод: <code>{barcode}</code>\n\n🔍 Ищу продукт в базе...", parse_mode="HTML")
-        
-        # Валидация контрольной суммы для EAN-13
-        if len(barcode) == 13:
-            if not self._verify_ean13_checksum(barcode):
-                await status_msg.edit_text(
-                    f"⚠️ Штрихкод <code>{barcode}</code> не прошёл проверку контрольной суммы.\n\n"
-                    "Возможно, есть опечатка. Попробуй ещё раз или найди текстом.",
-                    reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
-                )
-                return STATE_UNIVERSAL_INPUT
-        
+        if len(barcode) == 13 and not self._verify_ean13_checksum(barcode):
+            await status_msg.edit_text(
+                f"⚠️ Штрихкод <code>{barcode}</code> не прошёл проверку контрольной суммы.\n\n"
+                "Возможно, есть опечатка. Попробуй ещё раз или найди текстом.",
+                reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
+            )
+            return STATE_UNIVERSAL_INPUT
         product = await self.api_client.get_product_by_barcode(barcode)
-
         if not product:
             await status_msg.edit_text(
                 f"❌ Продукт со штрихкодом <code>{barcode}</code> не найден в базе.\n\nПопробуй найти через текстовый поиск.",
                 reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
             )
             return STATE_UNIVERSAL_INPUT
-
         context.user_data["selected_product"] = product
         context.user_data["search_results"] = [product]
         context.user_data["search_page"] = 0
-        
-        # 🎯 Определяем, является ли продукт жидкостью
-        is_liquid = product.get("is_liquid", False)
-        context.user_data["is_liquid"] = is_liquid
-        
+        context.user_data["is_liquid"] = product.get("is_liquid", False)
         await status_msg.delete()
-        
-        liquid_icon = "💧 " if is_liquid else ""
+        liquid_icon = "💧 " if product.get("is_liquid") else ""
         text = f"✅  <b>Продукт найден!</b>\n\n🍽 {liquid_icon}<b>{product['name']}</b>\n🔥 {product.get('kcal_100g', 0):.0f} ккал / 100г\n\nСколько грамм ты съел?"
         await update.message.reply_text(text, reply_markup=get_weight_input_keyboard(product['name']), parse_mode="HTML")
         return STATE_ENTER_WEIGHT
@@ -294,33 +248,27 @@ class AddFoodHandlers:
         food_name, weight, unit = self.food_matcher.parse_quantity_from_text(text)
         if unit and unit != 'г':
             weight = None
-
         context.user_data["food_search_query"] = food_name
         if weight:
             context.user_data["food_weight"] = weight
-
         status_msg = await update.message.reply_text("🔍  <b>Ищу продукты...</b>", parse_mode="HTML")
         return await self._execute_search_and_show_results(update, context, food_name, status_msg)
 
     async def _execute_search_and_show_results(self, update: Update, context: ContextTypes.DEFAULT_TYPE, food_name: str, status_msg) -> int:
         products = await self.food_matcher.search_with_api_fallback(food_name)
-
         if not products:
             await status_msg.edit_text(
                 f"❌ По запросу <i>«{food_name}»</i> ничего не найдено.\n\nПопробуй написать по-другому или проверить опечатки.",
                 reply_markup=get_universal_input_keyboard(), parse_mode="HTML"
             )
             return STATE_UNIVERSAL_INPUT
-
         context.user_data["search_results"] = products
         context.user_data["search_page"] = 0
         total = len(products)
         pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
-
         text = f"🔍  <b>Найдено: {total} продуктов</b>\nЗапрос: <i>«{food_name}»</i>\nСтраница 1 из {pages}\n\n"
         text += self._format_products_text(products[:PAGE_SIZE], start_idx=0)
         text += "Выбери подходящий вариант:"
-
         await status_msg.delete()
         await update.message.reply_text(text, reply_markup=get_product_selection_keyboard(products, page=0, query=food_name), parse_mode="HTML")
         return STATE_SELECT_PRODUCT
@@ -334,13 +282,11 @@ class AddFoodHandlers:
         context.user_data["search_results"] = POPULAR_FOODS
         context.user_data["search_page"] = 0
         context.user_data["food_search_query"] = "Популярные блюда"
-
         total = len(POPULAR_FOODS)
         pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
         text = f"🔥  <b>Популярные блюда</b>\n\nВсего: {total} блюд\nСтраница 1 из {pages}\n\n"
         text += self._format_products_text(POPULAR_FOODS[:PAGE_SIZE], start_idx=0)
         text += "Выбери блюдо из списка:"
-
         await query.edit_message_text(text, reply_markup=get_product_selection_keyboard(POPULAR_FOODS, page=0, query="Популярные блюда"), parse_mode="HTML")
         return STATE_SELECT_PRODUCT
 
@@ -355,25 +301,18 @@ class AddFoodHandlers:
             index = int(data.replace(CALLBACK_SELECT_PRODUCT, ""))
         except ValueError:
             return STATE_SELECT_PRODUCT
-
         products = context.user_data.get("search_results", [])
         if index >= len(products):
             await query.answer("❌ Продукт не найден", show_alert=True)
             return STATE_SELECT_PRODUCT
-
         selected = products[index]
         context.user_data["selected_product"] = selected
-        
-        # 🎯 Определяем, является ли продукт жидкостью
-        is_liquid = selected.get("is_liquid", False)
-        context.user_data["is_liquid"] = is_liquid
-
+        context.user_data["is_liquid"] = selected.get("is_liquid", False)
         if "food_weight" in context.user_data:
             weight = context.user_data["food_weight"]
             calculated = self.api_client.calculate_for_weight(selected, weight)
             context.user_data["calculated_food"] = calculated
             return await self._ask_meal_type(update, context)
-
         return await self._ask_weight(update, context)
 
     async def handle_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -383,23 +322,19 @@ class AddFoodHandlers:
         results = ctx["results"]
         current_page = ctx["page"]
         total_pages = max(1, (len(results) + PAGE_SIZE - 1) // PAGE_SIZE)
-
         if query.data == CALLBACK_PAGE_PREV:
             new_page = max(0, current_page - 1)
         elif query.data == CALLBACK_PAGE_NEXT:
             new_page = min(total_pages - 1, current_page + 1)
         else:
             return STATE_SELECT_PRODUCT
-
         context.user_data["search_page"] = new_page
         start_idx = new_page * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
         page_products = results[start_idx:end_idx]
-
         text = f"🔍  <b>Найдено: {len(results)} продуктов</b>\nЗапрос: <i>«{ctx['query']}»</i>\nСтраница {new_page + 1} из {total_pages}\n\n"
         text += self._format_products_text(page_products, start_idx=start_idx)
         text += "Выбери подходящий вариант:"
-
         await query.edit_message_text(text, reply_markup=get_product_selection_keyboard(results, page=new_page, query=ctx["query"]), parse_mode="HTML")
         return STATE_SELECT_PRODUCT
 
@@ -413,11 +348,8 @@ class AddFoodHandlers:
         product = context.user_data.get("selected_product", {})
         default_weight = product.get("default_weight", 100)
         name = product.get("name", "")[:40]
-        
-        # 🎯 Индикатор жидкости
         is_liquid = product.get("is_liquid", False)
         liquid_icon = "💧 " if is_liquid else ""
-
         text = f"⚖️  <b>Сколько грамм?</b>\n\n🍽 {liquid_icon}<b>{name}</b>\n💡 Обычно: ~{default_weight:.0f}г\n\nВыбери из вариантов или введи свой."
         target = query.edit_message_text if query else update.message.reply_text
         await target(text, reply_markup=get_weight_input_keyboard(name), parse_mode="HTML")
@@ -427,7 +359,6 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer()
         data = query.data
-
         if data == CALLBACK_BACK_TO_RESULTS:
             return await self._back_to_results(update, context)
         if data == CALLBACK_SEARCH_AGAIN:
@@ -435,7 +366,6 @@ class AddFoodHandlers:
         if data == CALLBACK_WEIGHT_CUSTOM:
             await query.edit_message_text("✏️  <b>Введи вес в граммах</b>\n\nТолько число, например: <code>150</code>", reply_markup=get_custom_weight_keyboard(), parse_mode="HTML")
             return STATE_ENTER_WEIGHT
-
         if data.startswith(CALLBACK_WEIGHT_PREFIX):
             try:
                 weight = float(data.replace(CALLBACK_WEIGHT_PREFIX, ""))
@@ -456,7 +386,6 @@ class AddFoodHandlers:
         except ValueError:
             await update.message.reply_text("❌ Введи число от 1 до 10000 грамм.\nНапример: <code>150</code>", reply_markup=get_custom_weight_keyboard(), parse_mode="HTML")
             return STATE_ENTER_WEIGHT
-
         product = context.user_data.get("selected_product", {})
         calculated = self.api_client.calculate_for_weight(product, weight)
         context.user_data["calculated_food"] = calculated
@@ -482,10 +411,8 @@ class AddFoodHandlers:
         await update.message.reply_text(text, reply_markup=get_meal_type_keyboard(), parse_mode="HTML")
 
     def _format_meal_type_text(self, calculated: dict) -> str:
-        # 🎯 Индикатор жидкости
         is_liquid = calculated.get("is_liquid", False)
         liquid_icon = "💧 " if is_liquid else ""
-        
         return (
             f"🍽️  <b>Когда ты это съел?</b>\n\n"
             f"🍳 {liquid_icon}<b>{calculated.get('name', '')}</b>\n"
@@ -503,16 +430,12 @@ class AddFoodHandlers:
             return await self._ask_weight(update, context)
         if query.data == CALLBACK_SEARCH_AGAIN:
             return await self._search_again(update, context)
-
         meal_type = query.data.replace(CALLBACK_MEAL_PREFIX, "")
         context.user_data["meal_type"] = meal_type
         calculated = context.user_data.get("calculated_food", {})
         meal_label = MEAL_TYPES.get(meal_type, meal_type)
-
-        # 🎯 Индикатор жидкости
         is_liquid = calculated.get("is_liquid", False)
         liquid_icon = "💧 " if is_liquid else ""
-
         text = (
             f"✅  <b>Проверь данные</b>\n\n"
             f"🍳 {liquid_icon}<b>{calculated.get('name', '')}</b>\n"
@@ -534,38 +457,32 @@ class AddFoodHandlers:
         query = update.callback_query
         await query.answer("✓ Сохраняю...")
         data = query.data
-
         if data == CALLBACK_CHANGE_WEIGHT:
             return await self._ask_weight(update, context)
         if data == CALLBACK_SEARCH_AGAIN:
             return await self._search_again(update, context)
         if data == CALLBACK_BACK_TO_DIARY:
             return await self._back_to_diary(update, context)
-
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
         calculated = context.user_data.get("calculated_food", {})
         meal_type = context.user_data.get("meal_type", "snack")
         selected = context.user_data.get("selected_product", {})
-
         await self.meal_repo.add_meal(
             user_id=user_id, meal_type=meal_type, food_name=calculated["name"],
             amount_g=calculated["weight"], kcal=calculated["kcal"],
             protein_g=calculated["protein"], fat_g=calculated["fat"],
             carbs_g=calculated["carbs"], barcode=selected.get("code")
         )
-
         meal_label = MEAL_TYPES.get(meal_type, meal_type)
         context.user_data["last_added_food"] = {
             "name": calculated["name"], "amount_g": calculated["weight"], "kcal": calculated["kcal"],
             "protein_g": calculated["protein"], "fat_g": calculated["fat"], "carbs_g": calculated["carbs"],
             "barcode": selected.get("code"),
+            "is_liquid": calculated.get("is_liquid", False),  # 🎯
         }
-
-        # 🎯 Индикатор жидкости
         is_liquid = calculated.get("is_liquid", False)
         liquid_icon = "💧 " if is_liquid else ""
-
         text = f"✅  <b>Добавлено в {meal_label}!</b>\n\n🍳 {liquid_icon}<b>{calculated['name']}</b>\n⚖️ {calculated['weight']:.0f}г\n🔥 {calculated['kcal']} ккал\n\nСохранить в избранное?"
         await query.edit_message_text(text, reply_markup=get_save_favorite_keyboard(), parse_mode="HTML")
         return STATE_CONFIRM_ADD
@@ -577,7 +494,6 @@ class AddFoodHandlers:
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
         food_data = context.user_data.get("last_added_food", {})
-
         if data == CALLBACK_SAVE_FAVORITE_YES and food_data:
             await self.favorites_repo.add_favorite(
                 user_id=user_id, food_name=food_data["name"], amount_g=food_data["amount_g"],
@@ -585,10 +501,8 @@ class AddFoodHandlers:
                 carbs_g=food_data["carbs_g"], barcode=food_data.get("barcode")
             )
             await query.answer("⭐ Сохранено в избранное!", show_alert=False)
-
         last_food = context.user_data.get("last_added_food", {})
         is_liquid = last_food.get("is_liquid", False)
-        
         # 🎯 Предлагаем трекать воду, если это жидкость
         if is_liquid:
             volume = last_food.get("amount_g", 0)
@@ -596,7 +510,6 @@ class AddFoodHandlers:
             text = f"🎉  <b>Готово!</b>\n\n💧 {last_food.get('name', 'Напиток')} добавлен.\n\nЗасчитать {volume:.0f}мл в дневник воды?"
             await query.edit_message_text(text, reply_markup=get_water_tracking_keyboard(), parse_mode="HTML")
             return STATE_AFTER_ADD
-        
         text = f"🎉  <b>Готово!</b>\n\n🍳 {last_food.get('name', 'Блюдо')} добавлено.\n\nЧто хочешь сделать?"
         await query.edit_message_text(text, reply_markup=get_after_add_keyboard(), parse_mode="HTML")
         return STATE_AFTER_ADD
@@ -606,24 +519,16 @@ class AddFoodHandlers:
         await query.answer()
         data = query.data
         context.user_data.pop("last_added_food", None)
-
         # 🎯 Трекинг воды
         if data == CALLBACK_TRACK_WATER_YES:
             volume = context.user_data.get("liquid_volume", 0)
             user = update.effective_user
             user_id = await self.user_repo.get_user_id(user.id)
-            
-            # Добавляем в дневник воды
-            from db.repositories import WaterRepository
-            water_repo = WaterRepository(self.db)
-            await water_repo.add_water(user_id, volume)
-            
+            await self.water_repo.add_water(user_id, int(volume))
             await query.answer(f"💧 +{volume:.0f}мл добавлено в дневник воды!", show_alert=True)
             context.user_data.pop("liquid_volume", None)
-        
         if data == CALLBACK_TRACK_WATER_NO:
             context.user_data.pop("liquid_volume", None)
-
         if data == CALLBACK_ADD_ANOTHER:
             return await self.show_add_food_menu(update, context)
         if data == CALLBACK_SEARCH_AGAIN:
@@ -665,7 +570,6 @@ class AddFoodHandlers:
         query = update.callback_query
         if query:
             await query.answer("🔍 Новый поиск")
-        
         self._clear_search_context(context)
         return await self._start_universal_input(update, context)
 
@@ -677,15 +581,12 @@ class AddFoodHandlers:
         results = ctx["results"]
         if not results:
             return await self._search_again(update, context)
-
         start_idx = ctx["page"] * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
         page_products = results[start_idx:end_idx]
-
         text = f"🔍  <b>Результаты поиска</b>\nЗапрос: <i>«{ctx['query']}»</i>\nСтраница {ctx['page'] + 1}\n\n"
         text += self._format_products_text(page_products, start_idx=start_idx)
         text += "Выбери продукт:"
-
         target = query.edit_message_text if query else update.message.reply_text
         await target(text, reply_markup=get_product_selection_keyboard(results, page=ctx["page"], query=ctx["query"]), parse_mode="HTML")
         return STATE_SELECT_PRODUCT
@@ -695,16 +596,12 @@ class AddFoodHandlers:
         if query:
             await query.answer()
         self._clear_search_context(context)
-
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
         profile = await self.user_repo.get_profile(user_id)
-        stats_repo = DailyStatsRepository(self.db)
-        today_stats = await stats_repo.get_today_stats(user_id)
-
+        today_stats = await DailyStatsRepository(self.db).get_today_stats(user_id)
         from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
         from handlers.water.utils import calculate_water_goal
-
         water_goal = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
         name = user.first_name or "друг"
         greeting = f"🥑  <b>С возвращением, {name}!</b>"
@@ -731,7 +628,7 @@ class AddFoodHandlers:
         return ConversationHandler.END
 
     # ================================================================
-    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ШТРИХ КОДА
+    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ШТРИХКОДА
     # ================================================================
     async def _decode_barcode_from_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
         try:
@@ -739,12 +636,9 @@ class AddFoodHandlers:
             file = await context.bot.get_file(photo.file_id)
             file_bytes = await file.download_as_bytearray()
             image = Image.open(io.BytesIO(file_bytes))
-            
             if image.mode in ('RGBA', 'P'):
                 image = image.convert('RGB')
-            
             variants = self._preprocess_barcode_image(image)
-            
             for processed_image in variants:
                 decoded_objects = decode(processed_image)
                 for obj in decoded_objects:
@@ -755,7 +649,6 @@ class AddFoodHandlers:
                             return barcode
                     except Exception:
                         continue
-            
             logger.warning("Не удалось распознать штрихкод")
             return None
         except Exception as e:
@@ -764,7 +657,6 @@ class AddFoodHandlers:
 
     def _preprocess_barcode_image(self, image: Image.Image) -> List[Image.Image]:
         variants = [image]
-        
         try:
             gray = image.convert('L')
             enhanced = ImageEnhance.Contrast(gray).enhance(2.0)
@@ -772,19 +664,16 @@ class AddFoodHandlers:
             variants.append(enhanced)
         except Exception:
             pass
-        
         try:
             gray = image.convert('L')
             variants.append(gray.filter(ImageFilter.SHARPEN))
         except Exception:
             pass
-        
         for angle in [90, 180, 270]:
             try:
                 variants.append(image.rotate(angle, expand=True))
             except Exception:
                 continue
-        
         return variants
 
     def _validate_barcode(self, barcode: str) -> bool:
@@ -821,7 +710,6 @@ def get_add_food_conversation_handler(db: Database) -> ConversationHandler:
                 CallbackQueryHandler(h.handle_method_selection, pattern="^food_method_"),
                 CallbackQueryHandler(h._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
             ],
-            # 🎯 ЕДИНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ ТИПОВ ВВОДА
             STATE_UNIVERSAL_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, h.process_universal_input),
                 MessageHandler(filters.VOICE | filters.AUDIO, h.process_universal_input),
@@ -849,7 +737,6 @@ def get_add_food_conversation_handler(db: Database) -> ConversationHandler:
             STATE_AFTER_ADD: [
                 CallbackQueryHandler(h.handle_after_add, pattern=f"^({CALLBACK_ADD_ANOTHER}|{CALLBACK_SEARCH_AGAIN}|{CALLBACK_BACK_TO_DIARY}|{CALLBACK_TRACK_WATER_YES}|{CALLBACK_TRACK_WATER_NO})$"),
             ],
-            # Fallback для ручного ввода
             STATE_MANUAL_CONFIRM: [
                 CallbackQueryHandler(h.confirm_manual_input, pattern=f"^{CALLBACK_MANUAL_CONFIRM}$"),
                 CallbackQueryHandler(h.edit_manual_input, pattern=f"^{CALLBACK_MANUAL_EDIT}$"),
