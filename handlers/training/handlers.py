@@ -5,12 +5,7 @@
 📸 КАРТИНКИ:
 Положи изображения в папку static/training/ с именами, совпадающими
 с ID упражнений из exercises.py:
-    - pushup_classic.jpg
-    - pullup_classic.jpg  
-    - squat_classic.jpg
-    - plank.jpg
-    - burpee.jpg
-    ... и т.д. для всех упражнений.
+    - pushup_classic.jpg, pullup_classic.jpg, squat_classic.jpg, и т.д.
 
 Формат: JPG или PNG, ~800x600px, до 500KB.
 Если файла нет — бот просто покажет текстовую карточку без картинки.
@@ -18,6 +13,7 @@
 import os
 import asyncio
 import logging
+import re
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
@@ -70,7 +66,6 @@ class TrainingHandlers:
         self.db = db
         self.user_repo = UserRepository(db)
         # 🎯 Определяем путь к папке с картинками упражнений
-        # handlers/training/handlers.py -> нужно подняться на 2 уровня вверх к корню проекта
         self._base_dir = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
@@ -82,17 +77,8 @@ class TrainingHandlers:
     def _get_exercise_image_path(self, exercise_id: str) -> str:
         """
         🎯 Возвращает путь к картинке упражнения.
-        
-        Ищет файл static/training/{exercise_id} с расширениями:
-        .jpg, .jpeg, .png, .webp
-        
-        Args:
-            exercise_id: ID упражнения (например, 'pushup_classic')
-            
-        Returns:
-            str: Полный путь к файлу картинки (или пустая строка, если нет)
+        Ищет файл static/training/{exercise_id} с расширениями .jpg/.jpeg/.png/.webp
         """
-        # Пробуем разные расширения
         for ext in ['.jpg', '.jpeg', '.png', '.webp']:
             image_path = os.path.join(
                 self._training_images_dir,
@@ -100,8 +86,40 @@ class TrainingHandlers:
             )
             if os.path.exists(image_path):
                 return image_path
-        
         return ""
+
+    def _escape_html(self, text: str) -> str:
+        """
+        🎯 Экранирует HTML-спецсимволы в данных (названия, описания).
+        Предотвращает поломку разметки, если в тексте есть < > &
+        """
+        if not isinstance(text, str):
+            text = str(text)
+        return html.escape(text, quote=False)
+
+    def _safe_html(self, text: str) -> str:
+        """
+        🎯 УЛУЧШЕННАЯ версия: корректно балансирует HTML-теги.
+        
+        Подсчитывает количество открывающих и закрывающих тегов
+        и добавляет недостающие закрывающие теги в правильном порядке.
+        """
+        if not text:
+            return text
+        
+        # Подсчитываем теги для каждого типа
+        tags_to_check = ['b', 'i', 'code', 'pre', 'a']
+        
+        for tag in tags_to_check:
+            open_count = text.count(f'<{tag}>') + text.count(f'<{tag} ')
+            close_count = text.count(f'</{tag}>')
+            
+            # Если открытых больше, чем закрытых — добавляем недостающие в конец
+            if open_count > close_count:
+                missing = open_count - close_count
+                text = text + (f'</{tag}>' * missing)
+        
+        return text
 
     async def _send_exercise_card_with_image(
         self,
@@ -112,9 +130,7 @@ class TrainingHandlers:
     ) -> bool:
         """
         🎯 Отправляет карточку упражнения с картинкой (если есть).
-        
-        Returns:
-            bool: True если отправлено с картинкой, False если только текст
+        Returns: True если отправлено с картинкой, False если только текст
         """
         image_path = self._get_exercise_image_path(exercise_id)
         
@@ -127,19 +143,22 @@ class TrainingHandlers:
                     except Exception as e:
                         logger.debug(f"Не удалось удалить старое сообщение: {e}")
                 
+                # 🎯 Применяем безопасную обработку HTML
+                safe_text = self._safe_html(text)
+                
                 # Отправляем новое сообщение с картинкой
                 with open(image_path, "rb") as photo:
                     if update.callback_query:
                         await update.callback_query.message.reply_photo(
                             photo=photo,
-                            caption=text,
+                            caption=safe_text,
                             reply_markup=keyboard,
                             parse_mode="HTML"
                         )
                     else:
                         await update.message.reply_photo(
                             photo=photo,
-                            caption=text,
+                            caption=safe_text,
                             reply_markup=keyboard,
                             parse_mode="HTML"
                         )
@@ -152,6 +171,52 @@ class TrainingHandlers:
                 return False
         
         return False
+
+    async def _edit_or_send_text(
+        self,
+        update: Update,
+        text: str,
+        keyboard,
+        delete_previous: bool = True
+    ) -> None:
+        """
+        🎯 Универсальный метод: редактирует текст или отправляет новый,
+        если предыдущее сообщение было с фото.
+        """
+        query = update.callback_query
+        
+        # 🎯 Применяем безопасную обработку HTML
+        safe_text = self._safe_html(text)
+        
+        # Сначала пробуем отредактировать
+        try:
+            await query.edit_message_text(
+                text=safe_text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            error_str = str(e)
+            # Если не удалось (сообщение с фото) — удаляем и отправляем новое
+            if "There is no text in the message to edit" in error_str or delete_previous:
+                try:
+                    await query.message.delete()
+                except:
+                    pass  # Игнорируем ошибки удаления
+                
+                await query.message.reply_text(
+                    text=safe_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            else:
+                # Другая ошибка — логируем и отправляем как новое
+                logger.error(f"Ошибка редактирования: {e}")
+                await query.message.reply_text(
+                    text=safe_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
 
     # ================================================================
     # ГЛАВНОЕ МЕНЮ
@@ -288,11 +353,6 @@ class TrainingHandlers:
     ) -> int:
         """
         🎯 Показывает карточку упражнения с картинкой (если есть).
-        
-        Логика:
-        1. Пытаемся найти картинку в static/training/{exercise_id}.jpg
-        2. Если есть — отправляем фото с caption
-        3. Если нет — отправляем обычное текстовое сообщение
         """
         query = update.callback_query
         exercise = get_exercise_by_id(exercise_id)
@@ -314,7 +374,7 @@ class TrainingHandlers:
         # Если картинка не отправлена — отправляем текст
         if not sent_with_image:
             await query.edit_message_text(
-                text,
+                text=self._safe_html(text),
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
@@ -344,7 +404,7 @@ class TrainingHandlers:
         if data.startswith(CALLBACK_EXERCISE_PREFIX) and exercise_id:
             return await self._show_exercise_card(update, context, exercise_id)
         
-        # Разделы упражнения
+        # Разделы упражнения — 🎯 ВАЖНО: используем _edit_or_send_text
         if not exercise_id:
             return STATE_EXERCISE_CARD
         
@@ -389,12 +449,11 @@ class TrainingHandlers:
             return STATE_EXERCISE_CARD
         
         text = formatter(exercise)
+        keyboard = get_exercise_detail_keyboard(exercise_id, section)
         
-        await query.edit_message_text(
-            text,
-            reply_markup=get_exercise_detail_keyboard(exercise_id, section),
-            parse_mode="HTML"
-        )
+        # 🎯 ИСПРАВЛЕНИЕ: используем универсальный метод вместо edit_message_text
+        await self._edit_or_send_text(update, text, keyboard)
+        
         return STATE_EXERCISE_DETAIL
 
     async def handle_exercise_detail(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -476,7 +535,7 @@ class TrainingHandlers:
             text = format_general_tip(tip_id)
             
             await query.edit_message_text(
-                text,
+                text=self._safe_html(text),
                 reply_markup=get_general_tip_detail_keyboard(tip_id),
                 parse_mode="HTML"
             )
