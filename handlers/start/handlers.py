@@ -1,11 +1,21 @@
-# handlers/start/handlers.py
+"""
+Обработчики стартового меню и дневника.
+🎯 Обновлено: вес для нормы воды берётся из body_measurements.
+"""
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-
 from db import Database, UserRepository, DailyStatsRepository
+from db.repositories import MeasurementsRepository  # 🎯 Для получения веса
 from handlers.registration.keyboards import get_start_registration_keyboard
 from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
 from handlers.water.utils import calculate_water_goal
+
+
+async def _get_user_weight(db: Database, user_id: int) -> float:
+    """🎯 Вспомогательная функция: получает актуальный вес из замеров тела."""
+    meas_repo = MeasurementsRepository(db)
+    last_weight = await meas_repo.get_last_measurement(user_id, 1)  # 1 = weight
+    return last_weight["value"] if last_weight else 70.0
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -14,7 +24,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     db: Database = context.bot_data["db"]
     user_repo = UserRepository(db)
     stats_repo = DailyStatsRepository(db)
-
     is_registered = await user_repo.exists(user.id)
 
     if is_registered:
@@ -22,12 +31,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         profile = await user_repo.get_profile(user_id)
         today_stats = await stats_repo.get_today_stats(user_id)
 
-        # Рассчитываем норму воды
-        water_goal_ml = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+        # 🎯 Получаем актуальный вес из замеров
+        weight = await _get_user_weight(db, user_id)
+
+        # Рассчитываем норму воды по реальному весу
+        water_goal_ml = calculate_water_goal(weight, profile["gender"])
         water_current_ml = today_stats.get("water_ml", 0)
 
         name = user.first_name or "друг"
-        greeting = f"🥑 <b>С возвращением, {name}!</b>"
+        greeting = f"🥑  <b>С возвращением, {name}!</b>"
 
         diary_text = format_diary_compact(
             daily_kcal=profile["daily_kcal"],
@@ -51,7 +63,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
     else:
         text = (
-            "🥑 <b>Добро пожаловать в NutriMate!</b>\n\n"
+            "🥑  <b>Добро пожаловать в NutriMate!</b>\n\n"
             "Привет! Я — простой и удобный дневник питания и тренировок.\n\n"
             "Здесь нет ничего лишнего:\n"
             "• Не нужно заполнять сложные формы\n"
@@ -70,7 +82,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /help."""
     text = (
-        "📖 <b>Как пользоваться NutriMate</b>\n\n"
+        "📖  <b>Как пользоваться NutriMate</b>\n\n"
         "Я работаю через кнопки. Тебе не нужно запоминать команды — "
         "просто нажимай на варианты под сообщениями.\n\n"
         "<b>Основные действия:</b>\n\n"
@@ -84,7 +96,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Заполняй <b>метрики</b> (сон, энергию, стресс) — я буду давать "
         "персональные советы по твоему метаболизму! 🧠"
     )
-
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📔 Открыть дневник", callback_data="diary_show")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
@@ -100,8 +111,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает дневник по callback_data='diary_show'."""
     query = update.callback_query
-    await query.answer()
-
+    if query:
+        await query.answer()
     user = update.effective_user
     db: Database = context.bot_data["db"]
     user_repo = UserRepository(db)
@@ -110,7 +121,8 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     is_registered = await user_repo.exists(user.id)
 
     if not is_registered:
-        await query.edit_message_text(
+        target = query.edit_message_text if query else update.message.reply_text
+        await target(
             "❌ Сначала нужно пройти регистрацию. Отправь команду /start",
             parse_mode="HTML"
         )
@@ -120,12 +132,15 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     profile = await user_repo.get_profile(user_id)
     today_stats = await stats_repo.get_today_stats(user_id)
 
-    # Рассчитываем норму воды
-    water_goal_ml = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+    # 🎯 Получаем актуальный вес из замеров
+    weight = await _get_user_weight(db, user_id)
+
+    # Рассчитываем норму воды по реальному весу
+    water_goal_ml = calculate_water_goal(weight, profile["gender"])
     water_current_ml = today_stats.get("water_ml", 0)
 
     name = user.first_name or "друг"
-    greeting = f"🥑 <b>С возвращением, {name}!</b>"
+    greeting = f"🥑  <b>С возвращением, {name}!</b>"
 
     diary_text = format_diary_compact(
         daily_kcal=profile["daily_kcal"],
@@ -142,7 +157,8 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     text = f"{greeting}\n\n{diary_text}"
 
-    await query.edit_message_text(
+    target = query.edit_message_text if query else update.message.reply_text
+    await target(
         text,
         reply_markup=get_main_diary_keyboard(),
         parse_mode="HTML"
@@ -150,12 +166,9 @@ async def show_diary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Показывает меню дополнительных действий по нажатию на кнопку ⋯
-    """
+    """Показывает меню дополнительных действий по нажатию на кнопку ⋯"""
     query = update.callback_query
     await query.answer()
-
     text = "Что хочешь сделать?"
 
     keyboard = InlineKeyboardMarkup([
@@ -164,7 +177,7 @@ async def show_more_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("📈 Прогресс", callback_data="progress_show")],
         [InlineKeyboardButton("📜 История", callback_data="history_show")],
         [InlineKeyboardButton("⭐ Избранное", callback_data="favorites_show")],
-        [InlineKeyboardButton("📝 Мои метрики", callback_data="metrics_show")],  # НОВАЯ КНОПКА
+        [InlineKeyboardButton("📝 Мои метрики", callback_data="metrics_show")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_show")],
         [InlineKeyboardButton("← Назад", callback_data="diary_show")],
     ])

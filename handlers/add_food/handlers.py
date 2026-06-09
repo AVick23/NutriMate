@@ -13,6 +13,9 @@ from telegram.ext import (
     ContextTypes, ConversationHandler,
     CallbackQueryHandler, MessageHandler, filters
 )
+from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
+from handlers.water.utils import calculate_water_goal
+from db.repositories import MeasurementsRepository
 from db.database import Database
 from db.repositories import UserRepository, MealRepository, FavoritesRepository, DailyStatsRepository
 from handlers.add_food.constants import (
@@ -560,13 +563,23 @@ class AddFoodHandlers:
         if query:
             await query.answer()
         self._clear_search_context(context)
+
         user = update.effective_user
         user_id = await self.user_repo.get_user_id(user.id)
         profile = await self.user_repo.get_profile(user_id)
-        today_stats = await DailyStatsRepository(self.db).get_today_stats(user_id)
+        stats_repo = DailyStatsRepository(self.db)
+        today_stats = await stats_repo.get_today_stats(user_id)
+
         from handlers.start.utils import format_diary_compact, get_main_diary_keyboard
         from handlers.water.utils import calculate_water_goal
-        water_goal = calculate_water_goal(profile.get("weight_kg", 70), profile["gender"])
+        from db.repositories import MeasurementsRepository  # 🎯
+
+        # 🎯 Получаем актуальный вес из замеров
+        meas_repo = MeasurementsRepository(self.db)
+        last_weight = await meas_repo.get_last_measurement(user_id, 1)
+        weight = last_weight["value"] if last_weight else 70.0
+
+        water_goal = calculate_water_goal(weight, profile["gender"])
         name = user.first_name or "друг"
         greeting = f"🥑  <b>С возвращением, {name}!</b>"
         diary_text = format_diary_compact(
