@@ -10,7 +10,7 @@ from db.repositories import UserRepository, WaterRepository, DailyStatsRepositor
 from .constants import (
     STATE_SELECT_VOLUME, STATE_WATER_INFO,
     DEFAULT_WATER_ML, CALLBACK_ADD_WATER_DEFAULT, CALLBACK_SHOW_VOLUMES,
-    CALLBACK_BACK_TO_DIARY, CALLBACK_WATER_INFO, CALLBACK_WATER_BACK
+    CALLBACK_BACK_TO_DIARY, CALLBACK_WATER_INFO, CALLBACK_WATER_BACK, CALLBACK_ADD_WATER
 )
 from .utils import get_water_status_text, calculate_water_goal, get_water_info_text
 from .keyboards import get_water_volume_keyboard, get_water_info_keyboard
