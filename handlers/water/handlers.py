@@ -1,15 +1,23 @@
 """
 Обработчики для управления водой.
-🎯 Обновлено: вес для нормы воды берётся из body_measurements.
+🎯 Обновлено: 
+- вес для нормы воды берётся из body_measurements
+- добавлен экран с информацией о норме воды
 """
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from db.database import Database
-from db.repositories import UserRepository, WaterRepository, DailyStatsRepository, MeasurementsRepository
-from .constants import STATE_SELECT_VOLUME, DEFAULT_WATER_ML, CALLBACK_ADD_WATER_DEFAULT, CALLBACK_SHOW_VOLUMES, CALLBACK_ADD_WATER, CALLBACK_BACK_TO_DIARY
-from .utils import get_water_status_text, calculate_water_goal
-from .keyboards import get_water_volume_keyboard
+from db.repositories import (
+    UserRepository, WaterRepository, DailyStatsRepository, MeasurementsRepository
+)
+from .constants import (
+    STATE_SELECT_VOLUME, STATE_WATER_INFO,
+    DEFAULT_WATER_ML, CALLBACK_ADD_WATER_DEFAULT, CALLBACK_SHOW_VOLUMES,
+    CALLBACK_ADD_WATER, CALLBACK_BACK_TO_DIARY, CALLBACK_WATER_INFO, CALLBACK_WATER_BACK
+)
+from .utils import get_water_status_text, calculate_water_goal, get_water_info_text
+from .keyboards import get_water_volume_keyboard, get_water_info_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +83,32 @@ class WaterHandlers:
             parse_mode="HTML"
         )
         return STATE_SELECT_VOLUME
+
+    # 🎯 НОВОЕ: Показывает информацию о норме воды
+    async def show_water_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Показывает информацию о норме воды."""
+        query = update.callback_query
+        await query.answer()
+
+        user = update.effective_user
+        user_id = await self.user_repo.get_user_id(user.id)
+
+        # Получаем норму воды по реальному весу
+        profile = await self.user_repo.get_profile(user_id)
+        if profile:
+            weight = await self._get_user_weight(user_id)
+            water_goal = calculate_water_goal(weight, profile["gender"])
+        else:
+            water_goal = 2000
+
+        text = get_water_info_text(water_goal)
+
+        await query.edit_message_text(
+            text,
+            reply_markup=get_water_info_keyboard(),
+            parse_mode="HTML"
+        )
+        return STATE_WATER_INFO
 
     async def add_water_with_volume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Добавляет воду с выбранным объёмом."""
@@ -206,6 +240,14 @@ def get_water_handler(db: Database) -> ConversationHandler:
             STATE_SELECT_VOLUME: [
                 CallbackQueryHandler(handlers.add_water_with_volume, pattern="^water_vol_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.process_custom_volume),
+                # 🎯 Показ информации о воде
+                CallbackQueryHandler(handlers.show_water_info, pattern=f"^{CALLBACK_WATER_INFO}$"),
+                CallbackQueryHandler(handlers._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
+            ],
+            # 🎯 Состояние для информации о воде
+            STATE_WATER_INFO: [
+                CallbackQueryHandler(handlers.show_volume_menu, pattern=f"^{CALLBACK_ADD_WATER}$"),
+                CallbackQueryHandler(handlers._back_to_diary, pattern=f"^{CALLBACK_WATER_BACK}$"),
                 CallbackQueryHandler(handlers._back_to_diary, pattern=f"^{CALLBACK_BACK_TO_DIARY}$"),
             ],
         },

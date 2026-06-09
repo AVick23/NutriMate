@@ -1,15 +1,12 @@
 """
 Утилиты для работы с водой.
-🎯 Обновлено: добавлено пояснение о том, что норма — это общий объём жидкости.
+🎯 Включает пояснение о норме воды.
 """
 from .constants import EMOJI_WATER, EMOJI_WATER_FULL, EMOJI_WATER_EXCESS
 
 
 def format_water_progress(current: int, goal: int, length: int = 8) -> str:
-    """
-    Форматирует прогресс-бар воды.
-    Возвращает строку из ▰ и ▱.
-    """
+    """Форматирует прогресс-бар воды."""
     if goal <= 0:
         return "▱" * length
     ratio = min(1.0, current / goal)
@@ -18,9 +15,7 @@ def format_water_progress(current: int, goal: int, length: int = 8) -> str:
 
 
 def get_water_emoji(current: int, goal: int) -> str:
-    """
-    Возвращает эмодзи в зависимости от прогресса воды.
-    """
+    """Возвращает эмодзи в зависимости от прогресса воды."""
     if current >= goal * 1.5:
         return EMOJI_WATER_EXCESS
     elif current >= goal:
@@ -30,10 +25,9 @@ def get_water_emoji(current: int, goal: int) -> str:
 
 def calculate_water_goal(weight_kg: float, gender: str) -> int:
     """
-    Рассчитывает норму воды по формуле EFSA (Европейское агентство по безопасности пищевых продуктов).
+    Рассчитывает норму воды по формуле EFSA.
     Мужчины: 35 мл × вес (кг)
     Женщины: 30 мл × вес (кг)
-    Возвращает количество миллилитров.
     """
     if gender == "male":
         return int(weight_kg * 35)
@@ -42,10 +36,7 @@ def calculate_water_goal(weight_kg: float, gender: str) -> int:
 
 
 def get_water_status_text(current: int, goal: int) -> str:
-    """
-    Возвращает текст статуса воды.
-    goal — в миллилитрах.
-    """
+    """Возвращает текст статуса воды."""
     if current == 0:
         return f"Начни день со стакана воды! 💧 (норма: {goal} мл)"
     elif current < goal:
@@ -63,20 +54,23 @@ def get_water_status_text(current: int, goal: int) -> str:
 
 
 def get_water_display(current: int, goal: int) -> str:
-    """
-    Возвращает строку для отображения воды в дневнике.
-    """
+    """Возвращает строку для отображения воды в дневнике."""
     emoji = get_water_emoji(current, goal)
     return f"{emoji} {current} / {goal} мл"
 
 
 def get_water_info_text(goal: int) -> str:
     """
-    🎯 НОВОЕ: Возвращает пояснение о норме воды.
+    🎯 Возвращает пояснение о норме воды.
     """
     return (
         f"💧  <b>Твоя норма: {goal} мл</b>\n\n"
-        "Это <b>общий объём жидкости</b> за день по формуле EFSA.\n\n"
-        "<b>Важно:</b> старайся пить именно <b>чистую воду</b> — она составляет ~60-70% от этой нормы.\n\n"
-        "<i>☕ Чай, кофе и соки здесь не учитываются — добавляй только воду.</i>"
+        "Это <b>общий объём жидкости</b> за день по формуле EFSA "
+        "(Европейское агентство по безопасности пищевых продуктов).\n\n"
+        "<b>Важно:</b> старайся пить именно <b>чистую воду</b> — "
+        "она должна составлять ~60-70% от этой нормы.\n\n"
+        "<i>☕ Чай, кофе, соки и другие напитки здесь не учитываются — "
+        "добавляй только воду.</i>\n\n"
+        "<i>💡 Совет: кофе и алкоголь являются диуретиками и могут обезвоживать. "
+        "Компенсируй их дополнительным стаканом воды.</i>"
     )
