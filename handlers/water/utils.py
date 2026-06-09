@@ -1,4 +1,7 @@
-# handlers/water/utils.py
+"""
+Утилиты для работы с водой.
+🎯 Обновлено: добавлено пояснение о том, что норма — это общий объём жидкости.
+"""
 from .constants import EMOJI_WATER, EMOJI_WATER_FULL, EMOJI_WATER_EXCESS
 
 
@@ -9,7 +12,6 @@ def format_water_progress(current: int, goal: int, length: int = 8) -> str:
     """
     if goal <= 0:
         return "▱" * length
-    
     ratio = min(1.0, current / goal)
     filled = int(ratio * length)
     return "▰" * filled + "▱" * (length - filled)
@@ -66,3 +68,15 @@ def get_water_display(current: int, goal: int) -> str:
     """
     emoji = get_water_emoji(current, goal)
     return f"{emoji} {current} / {goal} мл"
+
+
+def get_water_info_text(goal: int) -> str:
+    """
+    🎯 НОВОЕ: Возвращает пояснение о норме воды.
+    """
+    return (
+        f"💧  <b>Твоя норма: {goal} мл</b>\n\n"
+        "Это <b>общий объём жидкости</b> за день по формуле EFSA.\n\n"
+        "<b>Важно:</b> старайся пить именно <b>чистую воду</b> — она составляет ~60-70% от этой нормы.\n\n"
+        "<i>☕ Чай, кофе и соки здесь не учитываются — добавляй только воду.</i>"
+    )
