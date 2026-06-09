@@ -8,7 +8,8 @@ from handlers.water import get_water_handler
 from handlers.measurements import get_measurements_handler
 from handlers.settings import get_settings_handler
 from handlers.favorites import get_favorites_handler
-from handlers.metrics import get_metrics_conversation_handler  # НОВЫЙ
+from handlers.metrics import get_metrics_conversation_handler
+from handlers.training import get_training_handler  # 🎯 ДОБАВЬ ЭТУ СТРОКУ
 
 
 def register_all_handlers(app: Application, db: Database) -> None:
@@ -45,5 +46,8 @@ def register_all_handlers(app: Application, db: Database) -> None:
     # ConversationHandler для избранного
     app.add_handler(get_favorites_handler(db))
 
-    # 🎯 НОВЫЙ: ConversationHandler для метрик
+    # ConversationHandler для метрик
     app.add_handler(get_metrics_conversation_handler(db))
+    
+    # 🎯 НОВЫЙ: ConversationHandler для тренировок
+    app.add_handler(get_training_handler(db))  # ДОБАВЬ ЭТУ СТРОКУ
