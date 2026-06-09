@@ -1,59 +1,80 @@
-# handlers/history_of_add/keyboards.py
+"""
+Клавиатуры для истории питания.
+🎯 Обновлено: убран "Завтра", добавлены "Неделя/Месяц", "Повторить день",
+   цветовые индикаторы в календаре.
+"""
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, date, timedelta
-from calendar import month_name
-from typing import List, Optional, Set
+from typing import List, Optional, Dict
+from .constants import STATUS_GOOD, STATUS_WARNING, STATUS_BAD, STATUS_EMPTY
 
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню выбора даты."""
+    """
+    🎯 Главное меню выбора даты.
+    Убрана кнопка "Завтра", добавлены "Неделя" и "Месяц".
+    """
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("◀️ Вчера", callback_data="history_yesterday"),
             InlineKeyboardButton("📅 Сегодня", callback_data="history_today"),
-            InlineKeyboardButton("Завтра ▶️", callback_data="history_tomorrow"),
+        ],
+        [
+            InlineKeyboardButton("📊 Неделя", callback_data="history_week"),
+            InlineKeyboardButton("📅 Месяц", callback_data="history_month"),
         ],
         [
             InlineKeyboardButton("📆 Другая дата", callback_data="history_other_date"),
         ],
         [
-            InlineKeyboardButton("← Назад в меню", callback_data="history_back_to_menu"),
+            InlineKeyboardButton("← Назад в дневник", callback_data="history_back_to_menu"),
         ],
     ])
 
 
-def get_navigation_keyboard(target_date: date) -> InlineKeyboardMarkup:
-    """Клавиатура навигации под историей."""
+def get_navigation_keyboard(target_date: date, has_entries: bool = False) -> InlineKeyboardMarkup:
+    """
+    🎯 Клавиатура навигации под историей.
+    Убрана кнопка "Завтра", добавлена "🔁 Повторить день".
+    """
+    prev_date = target_date - timedelta(days=1)
+    
+    row1 = [
+        InlineKeyboardButton("◀️ Вчера", callback_data=f"nav_{prev_date}"),
+        InlineKeyboardButton("📅 Сегодня", callback_data="nav_today"),
+    ]
+    
+    row2 = [InlineKeyboardButton("📆 Другая дата", callback_data="nav_other_date")]
+    
+    # 🎯 Кнопка "Повторить день" — только если есть записи
+    if has_entries:
+        row2.append(InlineKeyboardButton("🔁 Повторить день", callback_data="nav_repeat_day"))
+    
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("◀️ Вчера", callback_data=f"nav_{target_date - timedelta(days=1)}"),
-            InlineKeyboardButton("📅 Сегодня", callback_data="nav_today"),
-            InlineKeyboardButton("Завтра ▶️", callback_data=f"nav_{target_date + timedelta(days=1)}"),
-        ],
-        [
-            InlineKeyboardButton("📆 Другая дата", callback_data="nav_other_date"),
-        ],
+        row1,
+        row2,
         [
             InlineKeyboardButton("🍽️ Добавить еду", callback_data="nav_add_food"),
-            InlineKeyboardButton("← Назад", callback_data="history_back_to_menu"),
+            InlineKeyboardButton("← В меню", callback_data="history_back_to_menu"),
         ],
     ])
 
 
 def get_empty_history_keyboard(target_date: date) -> InlineKeyboardMarkup:
-    """Клавиатура для дня без записей."""
+    """Клавиатура для дня без записей. Убрана кнопка "Завтра"."""
+    prev_date = target_date - timedelta(days=1)
+    
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("◀️ Вчера", callback_data=f"nav_{target_date - timedelta(days=1)}"),
+            InlineKeyboardButton("◀️ Вчера", callback_data=f"nav_{prev_date}"),
             InlineKeyboardButton("📅 Сегодня", callback_data="nav_today"),
-            InlineKeyboardButton("Завтра ▶️", callback_data=f"nav_{target_date + timedelta(days=1)}"),
         ],
         [
             InlineKeyboardButton("📆 Другая дата", callback_data="nav_other_date"),
             InlineKeyboardButton("🍽️ Добавить еду", callback_data="nav_add_food"),
         ],
         [
-            InlineKeyboardButton("← Назад в меню", callback_data="history_back_to_menu"),
+            InlineKeyboardButton("← В меню", callback_data="history_back_to_menu"),
         ],
     ])
 
@@ -61,17 +82,21 @@ def get_empty_history_keyboard(target_date: date) -> InlineKeyboardMarkup:
 def get_calendar_keyboard(
     year: int,
     month: int,
-    available_dates: Set[str],
+    date_status: Dict[str, str],  # 🎯 НОВОЕ: {date_str: status}
     current_date: Optional[date] = None
 ) -> InlineKeyboardMarkup:
     """
-    Генерирует клавиатуру-календарь.
-    Подсвечивает даты, где есть записи (✓).
+    🎯 Генерирует клавиатуру-календарь с цветовыми индикаторами.
+    
+    🟢 — в норме
+    🟡 — небольшое отклонение
+    🔴 — сильное отклонение
+    ⚪ — нет записей
     """
     from calendar import monthcalendar
     
     buttons = []
-    
+
     # Заголовок с месяцем и годом
     month_name_ru = {
         1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
@@ -85,14 +110,25 @@ def get_calendar_keyboard(
         )
     ]
     buttons.append(title_row)
-    
+
+    # Легенда
+    legend_row = [
+        InlineKeyboardButton("🟢✓", callback_data="noop"),
+        InlineKeyboardButton("🟡~", callback_data="noop"),
+        InlineKeyboardButton("🔴!", callback_data="noop"),
+        InlineKeyboardButton("⚪—", callback_data="noop"),
+    ]
+    buttons.append(legend_row)
+
     # Дни недели
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     week_row = [InlineKeyboardButton(day, callback_data="noop") for day in weekdays]
     buttons.append(week_row)
-    
-    # Календарь
+
+    # Календарь с цветами
     cal = monthcalendar(year, month)
+    today = date.today()
+    
     for week in cal:
         row = []
         for day in week:
@@ -100,11 +136,24 @@ def get_calendar_keyboard(
                 row.append(InlineKeyboardButton(" ", callback_data="noop"))
             else:
                 date_str = f"{year}-{month:02d}-{day:02d}"
-                has_entries = date_str in available_dates
+                current_day = date(year, month, day)
                 
-                # Формируем текст кнопки
-                if has_entries:
-                    button_text = f"✓ {day}"
+                # Будущие дни — неактивны
+                if current_day > today:
+                    row.append(InlineKeyboardButton(" ", callback_data="noop"))
+                    continue
+                
+                status = date_status.get(date_str, STATUS_EMPTY)
+                
+                # 🎯 Формируем текст с цветовым индикатором
+                if status == STATUS_GOOD:
+                    button_text = f"🟢{day}"
+                elif status == STATUS_WARNING:
+                    button_text = f"🟡{day}"
+                elif status == STATUS_BAD:
+                    button_text = f"🔴{day}"
+                elif status == STATUS_EMPTY:
+                    button_text = f"⚪{day}"
                 else:
                     button_text = f"  {day}"
                 
@@ -115,21 +164,21 @@ def get_calendar_keyboard(
                     )
                 )
         buttons.append(row)
-    
+
     # Навигация по месяцам
     nav_row = [
         InlineKeyboardButton("◀️", callback_data=f"calendar_prev_{year}_{month}"),
-        InlineKeyboardButton("📅 Выбрать", callback_data="noop"),
+        InlineKeyboardButton(f"{month_name_ru[month]} {year}", callback_data="noop"),
         InlineKeyboardButton("▶️", callback_data=f"calendar_next_{year}_{month}"),
     ]
     buttons.append(nav_row)
-    
+
     # Кнопка назад
     back_row = [
-        InlineKeyboardButton("← Назад к выбору даты", callback_data="calendar_back"),
+        InlineKeyboardButton("← Назад в меню", callback_data="calendar_back"),
     ]
     buttons.append(back_row)
-    
+
     return InlineKeyboardMarkup(buttons)
 
 
@@ -137,4 +186,36 @@ def get_calendar_back_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для возврата из календаря."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("← Назад к выбору даты", callback_data="calendar_back")],
+    ])
+
+
+def get_period_summary_keyboard(period_days: int) -> InlineKeyboardMarkup:
+    """
+    🎯 Клавиатура для сводки за период.
+    """
+    buttons = []
+    
+    if period_days == 7:
+        # Для недели — предлагаем посмотреть месяц
+        buttons.append([
+            InlineKeyboardButton("📅 Посмотреть месяц", callback_data="summary_to_month"),
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton("← В меню истории", callback_data="summary_back"),
+    ])
+    buttons.append([
+        InlineKeyboardButton("📔 В дневник", callback_data="history_back_to_menu"),
+    ])
+    
+    return InlineKeyboardMarkup(buttons)
+
+
+def get_repeat_confirmation_keyboard() -> InlineKeyboardMarkup:
+    """🎯 Клавиатура подтверждения повтора дня."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, повторить", callback_data="repeat_confirm"),
+            InlineKeyboardButton("❌ Отмена", callback_data="repeat_cancel"),
+        ],
     ])
