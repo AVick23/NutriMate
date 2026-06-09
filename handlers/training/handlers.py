@@ -1,7 +1,21 @@
 """
 Обработчики модуля тренировок.
-🎯 Научно обоснованная калистеника с Apple-like UX.
+🎯 Научно обоснованная калистеника с Apple-like UX + поддержка картинок.
+
+📸 КАРТИНКИ:
+Положи изображения в папку static/training/ с именами, совпадающими
+с ID упражнений из exercises.py:
+    - pushup_classic.jpg
+    - pullup_classic.jpg  
+    - squat_classic.jpg
+    - plank.jpg
+    - burpee.jpg
+    ... и т.д. для всех упражнений.
+
+Формат: JPG или PNG, ~800x600px, до 500KB.
+Если файла нет — бот просто покажет текстовую карточку без картинки.
 """
+import os
 import asyncio
 import logging
 from datetime import datetime
@@ -55,6 +69,89 @@ class TrainingHandlers:
     def __init__(self, db: Database):
         self.db = db
         self.user_repo = UserRepository(db)
+        # 🎯 Определяем путь к папке с картинками упражнений
+        # handlers/training/handlers.py -> нужно подняться на 2 уровня вверх к корню проекта
+        self._base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        self._training_images_dir = os.path.join(self._base_dir, "static", "training")
+
+    # ================================================================
+    # 🎯 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ КАРТИНОК
+    # ================================================================
+    def _get_exercise_image_path(self, exercise_id: str) -> str:
+        """
+        🎯 Возвращает путь к картинке упражнения.
+        
+        Ищет файл static/training/{exercise_id} с расширениями:
+        .jpg, .jpeg, .png, .webp
+        
+        Args:
+            exercise_id: ID упражнения (например, 'pushup_classic')
+            
+        Returns:
+            str: Полный путь к файлу картинки (или пустая строка, если нет)
+        """
+        # Пробуем разные расширения
+        for ext in ['.jpg', '.jpeg', '.png', '.webp']:
+            image_path = os.path.join(
+                self._training_images_dir,
+                f"{exercise_id}{ext}"
+            )
+            if os.path.exists(image_path):
+                return image_path
+        
+        return ""
+
+    async def _send_exercise_card_with_image(
+        self,
+        update: Update,
+        exercise_id: str,
+        text: str,
+        keyboard
+    ) -> bool:
+        """
+        🎯 Отправляет карточку упражнения с картинкой (если есть).
+        
+        Returns:
+            bool: True если отправлено с картинкой, False если только текст
+        """
+        image_path = self._get_exercise_image_path(exercise_id)
+        
+        if image_path and os.path.exists(image_path):
+            try:
+                # Если есть callback_query — удаляем старое текстовое сообщение
+                if update.callback_query:
+                    try:
+                        await update.callback_query.message.delete()
+                    except Exception as e:
+                        logger.debug(f"Не удалось удалить старое сообщение: {e}")
+                
+                # Отправляем новое сообщение с картинкой
+                with open(image_path, "rb") as photo:
+                    if update.callback_query:
+                        await update.callback_query.message.reply_photo(
+                            photo=photo,
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        await update.message.reply_photo(
+                            photo=photo,
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML"
+                        )
+                
+                logger.debug(f"✅ Отправлена картинка для {exercise_id}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Ошибка отправки картинки для {exercise_id}: {e}")
+                return False
+        
+        return False
 
     # ================================================================
     # ГЛАВНОЕ МЕНЮ
@@ -184,12 +281,19 @@ class TrainingHandlers:
         return STATE_MUSCLE_GROUP
 
     # ================================================================
-    # КАРТОЧКА УПРАЖНЕНИЯ
+    # 🎯 КАРТОЧКА УПРАЖНЕНИЯ (С КАРТИНКОЙ!)
     # ================================================================
     async def _show_exercise_card(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, exercise_id: str
     ) -> int:
-        """Показывает карточку упражнения."""
+        """
+        🎯 Показывает карточку упражнения с картинкой (если есть).
+        
+        Логика:
+        1. Пытаемся найти картинку в static/training/{exercise_id}.jpg
+        2. Если есть — отправляем фото с caption
+        3. Если нет — отправляем обычное текстовое сообщение
+        """
         query = update.callback_query
         exercise = get_exercise_by_id(exercise_id)
         
@@ -200,12 +304,21 @@ class TrainingHandlers:
         context.user_data["training_exercise_id"] = exercise_id
         
         text = format_exercise_card(exercise)
+        keyboard = get_exercise_card_keyboard(exercise_id)
         
-        await query.edit_message_text(
-            text,
-            reply_markup=get_exercise_card_keyboard(exercise_id),
-            parse_mode="HTML"
+        # 🎯 Пытаемся отправить с картинкой
+        sent_with_image = await self._send_exercise_card_with_image(
+            update, exercise_id, text, keyboard
         )
+        
+        # Если картинка не отправлена — отправляем текст
+        if not sent_with_image:
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        
         return STATE_EXERCISE_CARD
 
     async def handle_exercise_card(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
