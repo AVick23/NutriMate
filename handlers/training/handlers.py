@@ -500,14 +500,15 @@ class TrainingHandlers:
     async def _show_general_tips(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Показывает список общих советов."""
         query = update.callback_query
+        if query:
+            await query.answer()
         
         text = format_general_tips_menu()
+        keyboard = get_general_tips_keyboard()
         
-        await query.edit_message_text(
-            text,
-            reply_markup=get_general_tips_keyboard(),
-            parse_mode="HTML"
-        )
+        # 🎯 ИСПРАВЛЕНИЕ: используем универсальный метод вместо edit_message_text
+        await self._edit_or_send_text(update, text, keyboard)
+        
         return STATE_GENERAL_TIPS
 
     async def handle_general_tips(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -533,12 +534,10 @@ class TrainingHandlers:
             context.user_data["training_tip_id"] = tip_id
             
             text = format_general_tip(tip_id)
+            keyboard = get_general_tip_detail_keyboard(tip_id)
             
-            await query.edit_message_text(
-                text=self._safe_html(text),
-                reply_markup=get_general_tip_detail_keyboard(tip_id),
-                parse_mode="HTML"
-            )
+            # 🎯 ИСПРАВЛЕНИЕ: используем универсальный метод
+            await self._edit_or_send_text(update, text, keyboard)
             return STATE_GENERAL_TIPS
         
         return STATE_GENERAL_TIPS
