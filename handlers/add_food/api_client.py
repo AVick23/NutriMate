@@ -1,6 +1,6 @@
 """
 Клиент для работы с Open Food Facts API.
-🎯 Обновлено: page_size=50, определение жидкостей, кэширование пустых кодов.
+🎯 Обновлено: убрано распознавание жидкостей, page_size=50.
 """
 import asyncio
 import httpx
@@ -24,7 +24,6 @@ class OpenFoodFactsClient:
         self.client = httpx.AsyncClient(timeout=10.0, headers=headers)
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._barcode_cache: Dict[str, Optional[Dict[str, Any]]] = {}
-        self._empty_barcode_cache: set = set()  # 🎯 Кэш "пустых" штрихкодов
         self._cache_max_size = 200
         self._last_request_time: float = 0
         self._min_interval = 0.3
@@ -133,7 +132,6 @@ class OpenFoodFactsClient:
 
         quantity = product.get("quantity")
         default_weight = self._parse_default_weight(quantity)
-        is_liquid = self._is_liquid_product(product)  # 🎯
 
         return {
             "code": product.get("code", ""),
@@ -147,13 +145,9 @@ class OpenFoodFactsClient:
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
             "is_russian": True,
-            "is_liquid": is_liquid,  # 🎯
         }
 
     async def get_product_by_barcode(self, barcode: str) -> Optional[Dict[str, Any]]:
-        # 🎯 Проверяем кэш "пустых" штрихкодов
-        if barcode in self._empty_barcode_cache:
-            return None
         if barcode in self._barcode_cache:
             return self._barcode_cache[barcode]
 
@@ -165,17 +159,15 @@ class OpenFoodFactsClient:
 
             product_data = data.get("product")
             if not product_data:
-                self._empty_barcode_cache.add(barcode)  # 🎯 Кэшируем "пустой"
+                self._barcode_cache[barcode] = None
                 return None
 
             parsed = self._parse_v2_product(product_data)
-            if parsed:
-                self._barcode_cache[barcode] = parsed
-            else:
-                self._empty_barcode_cache.add(barcode)
+            self._barcode_cache[barcode] = parsed
             return parsed
         except Exception as e:
             logger.error(f"Barcode lookup failed for {barcode}: {e}")
+            self._barcode_cache[barcode] = None
             return None
 
     def _parse_v2_product(self, product: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -213,7 +205,6 @@ class OpenFoodFactsClient:
 
         countries_tags = product.get("countries_tags", [])
         is_russian = "russia" in countries_tags or "ru" in countries_tags
-        is_liquid = self._is_liquid_product(product)  # 🎯
 
         return {
             "code": product.get("code", ""),
@@ -227,29 +218,7 @@ class OpenFoodFactsClient:
             "carbs_100g": float(carbs_100g) if carbs_100g else 0.0,
             "image_url": product.get("image_url") or product.get("image_front_url"),
             "is_russian": is_russian,
-            "is_liquid": is_liquid,  # 🎯
         }
-
-    def _is_liquid_product(self, product: Dict[str, Any]) -> bool:
-        """🎯 Определяет, является ли продукт жидкостью для трекинга воды."""
-        categories_tags = product.get("categories_tags", [])
-        categories_tags_en = product.get("categories_tags_en", [])
-        liquid_tags = {
-            "en:beverages", "beverages",
-            "en:water", "water",
-            "en:teas", "teas",
-            "en:coffees", "coffees",
-            "en:fruit-juices", "fruit-juices",
-            "en:soups", "soups",
-            "en:milk", "milk",
-            "en:soft-drinks", "soft-drinks",
-            "en:energy-drinks", "energy-drinks",
-            "en:alcoholic-beverages", "alcoholic-beverages",
-        }
-        for tag in categories_tags + categories_tags_en:
-            if isinstance(tag, str) and tag.lower() in liquid_tags:
-                return True
-        return False
 
     def _parse_default_weight(self, quantity: Optional[Any]) -> float:
         if not quantity:
@@ -282,7 +251,6 @@ class OpenFoodFactsClient:
             "fat": round(product.get("fat_100g", 0) * multiplier, 1),
             "carbs": round(product.get("carbs_100g", 0) * multiplier, 1),
             "image_url": product.get("image_url"),
-            "is_liquid": product.get("is_liquid", False),  # 🎯
         }
 
     def _add_to_cache(self, key: str, products: List[Dict[str, Any]]):

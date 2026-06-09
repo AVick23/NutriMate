@@ -1,6 +1,6 @@
 """
 Клавиатуры для добавления еды.
-🎯 Обновлено: добавлена клавиатура для трекинга воды, индикаторы жидкостей.
+🎯 Обновлено: убрана клавиатура для трекинга воды.
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Dict, Any
@@ -13,7 +13,6 @@ from .constants import (
     CALLBACK_MEAL_PREFIX, CALLBACK_CONFIRM_ADD, CALLBACK_CHANGE_WEIGHT,
     CALLBACK_ADD_ANOTHER, CALLBACK_SAVE_FAVORITE_YES, CALLBACK_SAVE_FAVORITE_NO,
     CALLBACK_NOOP, CALLBACK_MANUAL_SKIP, CALLBACK_MANUAL_CONFIRM, CALLBACK_MANUAL_EDIT,
-    CALLBACK_TRACK_WATER_YES, CALLBACK_TRACK_WATER_NO,
 )
 
 
@@ -49,12 +48,11 @@ def get_product_selection_keyboard(
         name = product.get("name", "Без названия")[:32]
         brand = product.get("brand", "")
         kcal = product.get("kcal_100g", 0)
-        liquid_icon = "💧 " if product.get("is_liquid") else ""  # 🎯
 
         if brand and str(brand).strip():
-            button_text = f"{i + 1}. {liquid_icon}{name} · {str(brand)[:12]} · {kcal:.0f}ккал"
+            button_text = f"{i + 1}. {name} · {str(brand)[:12]} · {kcal:.0f}ккал"
         else:
-            button_text = f"{i + 1}. {liquid_icon}{name} · {kcal:.0f}ккал/100г"
+            button_text = f"{i + 1}. {name} · {kcal:.0f}ккал/100г"
 
         buttons.append([
             InlineKeyboardButton(button_text, callback_data=f"{CALLBACK_SELECT_PRODUCT}{real_index}")
@@ -148,14 +146,4 @@ def get_manual_confirm_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Всё верно", callback_data=CALLBACK_MANUAL_CONFIRM)],
         [InlineKeyboardButton("✏️ Изменить", callback_data=CALLBACK_MANUAL_EDIT)],
         [InlineKeyboardButton("📔 Отмена", callback_data=CALLBACK_BACK_TO_DIARY)],
-    ])
-
-
-def get_water_tracking_keyboard() -> InlineKeyboardMarkup:
-    """🎯 Клавиатура для предложения трекинга воды."""
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("💧 Да, засчитать", callback_data=CALLBACK_TRACK_WATER_YES),
-            InlineKeyboardButton("👌 Нет", callback_data=CALLBACK_TRACK_WATER_NO),
-        ],
     ])

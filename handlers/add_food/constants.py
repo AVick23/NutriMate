@@ -1,6 +1,6 @@
 """
 Состояния FSM и callback-данные для добавления еды.
-🎯 Обновлено: PAGE_SIZE увеличен до 15, добавлены callback для трекинга воды.
+🎯 Обновлено: убран трекинг воды после добавления напитков.
 """
 # ============ Состояния ConversationHandler ============
 (
@@ -65,9 +65,7 @@ CALLBACK_MANUAL_CONFIRM = "food_manual_confirm"
 CALLBACK_MANUAL_EDIT = "food_manual_edit"
 CALLBACK_MANUAL_BARCODE = "food_manual_barcode"
 
-# ============ 🎯 Callback: трекинг воды ============
-CALLBACK_TRACK_WATER_YES = "food_track_water_yes"
-CALLBACK_TRACK_WATER_NO = "food_track_water_no"
+# 🎯 УБРАНО: CALLBACK_TRACK_WATER_YES / CALLBACK_TRACK_WATER_NO
 
 # ============ Callback: служебные ============
 CALLBACK_NOOP = "food_noop"
